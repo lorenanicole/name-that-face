@@ -1,0 +1,61 @@
+# =============================================================================
+# docker-compose.yml — Name-that-face
+#
+# Services:
+#   api     — FastAPI server (port 8000)
+#   client  — Streamlit front-end (port 8501)
+#
+# Usage:
+#   docker compose up --build          # first run
+#   docker compose up                  # subsequent runs (uses cached image)
+#   docker compose down                # stop and remove containers
+#
+# For ngrok: run ngrok separately against port 8501 (see README).
+# =============================================================================
+
+services:
+  api:
+    build:
+      context: ..
+      dockerfile: name-that-face/Dockerfile
+    image: name-that-face-api
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      DEEPFACE_PYTHON: /opt/deepface-venv/bin/python
+      LOG_FORMAT: json
+      LOG_LEVEL: INFO
+      # Audit log path inside the container (mapped to ./logs on the host)
+      AUDIT_LOG_PATH: /app/logs/audit_log.jsonl
+    volumes:
+      # Persist audit logs and DeepFace model weights across restarts
+      - ./logs:/app/logs
+      - deepface-weights:/root/.deepface
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/docs"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    restart: unless-stopped
+
+  client:
+    build:
+      context: ..
+      dockerfile: name-that-face/Dockerfile.client
+    image: name-that-face-client
+    ports:
+      - "8501:8501"
+    environment:
+      # Points the Streamlit app at the API container by service name
+      API_BASE_URL: http://api:8000
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  # Named volume so ArcFace/FaceNet weights (~600 MB) survive image rebuilds
+  deepface-weights:

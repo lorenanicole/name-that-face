@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.venv/
+
+# Secrets — never commit these
+.env
+
+# Logs / generated output
+logs/
+audit_log.jsonl
+htmlcov/
+.coverage
+.pytest_cache/
+
+# PDFs / binaries
+*.pdf
+
+# macOS
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
+
+# Old exercise scaffolding (kept locally, not for the repo)
+IMPLEMENTATION_OVERVIEW.md
+MISSING_FEATURES.md
+scripts.py

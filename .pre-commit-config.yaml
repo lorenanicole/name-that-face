@@ -1,0 +1,35 @@
+# .pre-commit-config.yaml — Name-that-face
+#
+# Hooks run on `git commit` (fast) and `git push` (thorough).
+# Install once with:  poetry run pre-commit install --hook-type pre-commit --hook-type pre-push
+
+repos:
+  # ── ruff: auto-fix then format ──────────────────────────────────────────
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.9.10
+    hooks:
+      - id: ruff                  # lint + auto-fix (replaces flake8/isort)
+        args: [--fix]
+        stages: [pre-commit]
+      - id: ruff-format           # black-compatible formatter
+        stages: [pre-commit]
+
+  # ── unit tests: run on every commit (fast, ~1s) ─────────────────────────
+  - repo: local
+    hooks:
+      - id: unit-tests
+        name: unit tests
+        language: system
+        entry: poetry run pytest -m unit -q --tb=short
+        pass_filenames: false
+        stages: [pre-commit]
+
+  # ── integration tests: run on push only (slower) ────────────────────────
+  - repo: local
+    hooks:
+      - id: integration-tests
+        name: integration tests
+        language: system
+        entry: poetry run pytest -m integration -q --tb=short
+        pass_filenames: false
+        stages: [pre-push]

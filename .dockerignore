@@ -1,0 +1,11 @@
+**/__pycache__
+**/*.pyc
+**/*.pyo
+**/*.egg-info/
+**/.venv/
+01_rate_limiter/.env
+01_rate_limiter/audit_log.jsonl
+01_rate_limiter/logs/
+01_rate_limiter/*.pdf
+**/.DS_Store
+.git/

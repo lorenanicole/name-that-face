@@ -1,0 +1,421 @@
+# Nametag Token Configuration
+# This file defines all token types, scopes, and operations
+# Can be loaded at startup and shared across services
+ 
+version: "1.0"
+environment: "production"
+ 
+# ============================================================================
+# Token Types
+# ============================================================================
+token_types:
+  user:
+    description: "End-user session tokens"
+    enabled: true
+    daily_token_budget: 100000      # 100K tokens per day
+    max_operations_per_day: 10000
+    max_concurrent_sessions: 5
+    tags:
+      - production
+      - user-facing
+    scopes:
+      read:
+        description: "User read operations"
+        rate_limit_per_minute: 60
+        token_cost_base: 100
+        token_cost_max: 300
+        enabled: true
+      write:
+        description: "User write operations"
+        rate_limit_per_minute: 20
+        token_cost_base: 150
+        token_cost_max: 500
+        enabled: true
+      update:
+        description: "User update operations"
+        rate_limit_per_minute: 20
+        token_cost_base: 120
+        token_cost_max: 400
+        enabled: true
+      delete:
+        description: "User delete operations (limited)"
+        rate_limit_per_minute: 2
+        token_cost_base: 300
+        token_cost_max: 600
+        enabled: true
+ 
+  m2m:
+    description: "Machine-to-machine service tokens"
+    enabled: true
+    daily_token_budget: 1000000     # 1M tokens per day
+    max_operations_per_day: 100000
+    max_concurrent_sessions: 100
+    tags:
+      - production
+      - service
+    scopes:
+      read:
+        description: "Service read operations"
+        rate_limit_per_minute: 120
+        token_cost_base: 100
+        token_cost_max: 300
+        enabled: true
+      write:
+        description: "Service write operations"
+        rate_limit_per_minute: 60
+        token_cost_base: 150
+        token_cost_max: 500
+        enabled: true
+      admin:
+        description: "Service admin operations"
+        rate_limit_per_minute: 100
+        token_cost_base: 300
+        token_cost_max: 1000
+        enabled: true
+ 
+  admin:
+    description: "Administrator tokens"
+    enabled: true
+    daily_token_budget: 10000000    # 10M tokens per day
+    max_operations_per_day: 1000000
+    max_concurrent_sessions: 1000
+    tags:
+      - production
+      - admin
+    scopes:
+      read:
+        description: "Admin read operations"
+        rate_limit_per_minute: 300
+        token_cost_base: 100
+        token_cost_max: 300
+        enabled: true
+      write:
+        description: "Admin write operations"
+        rate_limit_per_minute: 150
+        token_cost_base: 150
+        token_cost_max: 500
+        enabled: true
+      update:
+        description: "Admin update operations"
+        rate_limit_per_minute: 150
+        token_cost_base: 120
+        token_cost_max: 400
+        enabled: true
+      delete:
+        description: "Admin delete operations"
+        rate_limit_per_minute: 50
+        token_cost_base: 200
+        token_cost_max: 600
+        enabled: true
+      admin:
+        description: "Administrative operations"
+        rate_limit_per_minute: 100
+        token_cost_base: 300
+        token_cost_max: 1000
+        enabled: true
+      audit:
+        description: "Audit log access"
+        rate_limit_per_minute: 30
+        token_cost_base: 150
+        token_cost_max: 500
+        enabled: true
+ 
+  access_token:
+    description: "Third-party API access tokens"
+    enabled: true
+    daily_token_budget: 100000      # 100K tokens per day
+    max_operations_per_day: 1000
+    max_concurrent_sessions: 10
+    tags:
+      - production
+      - third-party
+    scopes:
+      read:
+        description: "Third-party read operations"
+        rate_limit_per_minute: 10
+        token_cost_base: 100
+        token_cost_max: 300
+        enabled: true
+      write:
+        description: "Third-party write operations"
+        rate_limit_per_minute: 5
+        token_cost_base: 150
+        token_cost_max: 400
+        enabled: true
+ 
+  oidc:
+    description: "OpenID Connect provider tokens"
+    enabled: true
+    daily_token_budget: 50000       # 50K tokens per day
+    max_operations_per_day: 5000
+    max_concurrent_sessions: 50
+    tags:
+      - production
+      - oauth2
+    scopes:
+      read:
+        description: "OIDC read operations"
+        rate_limit_per_minute: 20
+        token_cost_base: 100
+        token_cost_max: 300
+        enabled: true
+      write:
+        description: "OIDC write operations"
+        rate_limit_per_minute: 10
+        token_cost_base: 150
+        token_cost_max: 500
+        enabled: true
+ 
+# ============================================================================
+# Scopes (Shared across token types where applicable)
+# ============================================================================
+scopes:
+  read:
+    description: "Read-only operations (GET)"
+    default_rate_limit_per_minute: 60
+    default_token_cost_base: 100
+    default_token_cost_max: 300
+ 
+  write:
+    description: "Create operations (POST)"
+    default_rate_limit_per_minute: 20
+    default_token_cost_base: 150
+    default_token_cost_max: 500
+ 
+  update:
+    description: "Modify operations (PUT/PATCH)"
+    default_rate_limit_per_minute: 20
+    default_token_cost_base: 120
+    default_token_cost_max: 400
+ 
+  delete:
+    description: "Delete operations (DELETE)"
+    default_rate_limit_per_minute: 5
+    default_token_cost_base: 200
+    default_token_cost_max: 600
+ 
+  admin:
+    description: "Administrative operations"
+    default_rate_limit_per_minute: 100
+    default_token_cost_base: 300
+    default_token_cost_max: 1000
+ 
+  billing:
+    description: "Billing/payment operations"
+    default_rate_limit_per_minute: 10
+    default_token_cost_base: 250
+    default_token_cost_max: 500
+ 
+  audit:
+    description: "Audit log access"
+    default_rate_limit_per_minute: 30
+    default_token_cost_base: 150
+    default_token_cost_max: 500
+ 
+# ============================================================================
+# Operations
+# ============================================================================
+operations:
+  # READ Operations
+  api_get:
+    scope: read
+    description: "Generic API GET request"
+    token_cost: 100
+    rate_limit_multiplier: 1.0
+    token_cost_multiplier: 1.0
+    enabled: true
+ 
+  profile_read:
+    scope: read
+    description: "Read user profile"
+    token_cost: 150
+    rate_limit_multiplier: 1.0
+    token_cost_multiplier: 1.0
+    enabled: true
+ 
+  list:
+    scope: read
+    description: "List resources (stricter limits)"
+    token_cost: 200
+    rate_limit_multiplier: 2.0      # 2x stricter
+    token_cost_multiplier: 1.0
+    enabled: true
+ 
+  # WRITE Operations
+  create_user:
+    scope: write
+    description: "Create new user"
+    token_cost: 250
+    rate_limit_multiplier: 1.0
+    token_cost_multiplier: 1.0
+    enabled: true
+ 
+  create_session:
+    scope: write
+    description: "Create new session"
+    token_cost: 150
+    rate_limit_multiplier: 1.0
+    token_cost_multiplier: 1.0
+    enabled: true
+ 
+  # UPDATE Operations
+  update_profile:
+    scope: update
+    description: "Update profile"
+    token_cost: 180
+    rate_limit_multiplier: 1.0
+    token_cost_multiplier: 1.0
+    enabled: true
+ 
+  update_settings:
+    scope: update
+    description: "Update settings"
+    token_cost: 120
+    rate_limit_multiplier: 1.0
+    token_cost_multiplier: 1.0
+    enabled: true
+ 
+  # DELETE Operations
+  delete_user:
+    scope: delete
+    description: "Delete user account"
+    token_cost: 500
+    rate_limit_multiplier: 1.0
+    token_cost_multiplier: 1.0
+    enabled: true
+ 
+  delete_session:
+    scope: delete
+    description: "Delete session"
+    token_cost: 150
+    rate_limit_multiplier: 1.0
+    token_cost_multiplier: 1.0
+    enabled: true
+ 
+  # ADMIN Operations
+  admin_user_management:
+    scope: admin
+    description: "Admin user management"
+    token_cost: 400
+    rate_limit_multiplier: 1.0
+    token_cost_multiplier: 1.0
+    enabled: true
+ 
+  admin_audit_log:
+    scope: audit
+    description: "Access audit logs"
+    token_cost: 200
+    rate_limit_multiplier: 1.0
+    token_cost_multiplier: 1.0
+    enabled: true
+ 
+  # BILLING Operations
+  billing_invoice:
+    scope: billing
+    description: "Generate invoice"
+    token_cost: 300
+    rate_limit_multiplier: 1.0
+    token_cost_multiplier: 1.0
+    enabled: true
+ 
+  billing_usage:
+    scope: billing
+    description: "Check usage/billing"
+    token_cost: 150
+    rate_limit_multiplier: 1.0
+    token_cost_multiplier: 1.0
+    enabled: true
+ 
+  # AI Operations (Expensive!)
+  ai_analysis:
+    scope: read
+    description: "AI-powered analysis"
+    token_cost: 600
+    rate_limit_multiplier: 3.0      # 3x stricter (20/min instead of 60)
+    token_cost_multiplier: 1.0
+    enabled: true
+ 
+  ai_fraud_detection:
+    scope: admin
+    description: "Fraud detection analysis"
+    token_cost: 800
+    rate_limit_multiplier: 4.0      # 4x stricter (25/min instead of 100)
+    token_cost_multiplier: 1.0
+    enabled: true
+ 
+# ============================================================================
+# Subscription Tiers (For billing)
+# ============================================================================
+subscription_tiers:
+  free:
+    description: "Free tier"
+    daily_token_budget: 10000
+    max_operations_per_day: 100
+    operations_allowed:
+      - api_get
+      - profile_read
+      - create_session
+      - billing_usage
+    price_per_month: 0
+ 
+  tier_1:
+    description: "Basic tier"
+    daily_token_budget: 100000
+    max_operations_per_day: 10000
+    operations_allowed:
+      - api_get
+      - profile_read
+      - list
+      - create_user
+      - create_session
+      - update_profile
+      - update_settings
+      - ai_analysis  # Limited
+    price_per_month: 29
+ 
+  tier_2:
+    description: "Advanced tier"
+    daily_token_budget: 500000
+    max_operations_per_day: 50000
+    operations_allowed:
+      - "*"  # All operations
+    price_per_month: 99
+ 
+  enterprise:
+    description: "Enterprise tier"
+    daily_token_budget: 10000000
+    max_operations_per_day: 1000000
+    operations_allowed:
+      - "*"  # All operations
+    price_per_month: "custom"
+ 
+# ============================================================================
+# Environment-specific settings
+# ============================================================================
+settings:
+  log_level: "INFO"
+  enable_analytics: true
+  enable_rate_limiting: true
+  enable_token_budgeting: true
+ 
+  # Refill periods (in seconds)
+  refill_periods:
+    rate_limit: 60         # Per minute
+    token_budget: 86400    # Per day
+ 
+  # Error messages
+  error_messages:
+    rate_limit_exceeded: "Too many requests. Please try again later."
+    budget_exceeded: "Token budget exceeded. Please upgrade your plan or try again later."
+    permission_denied: "You don't have permission to perform this operation."
+    invalid_token: "Invalid or expired token."
+ 
+  # Headers to include in responses
+  response_headers:
+    - "X-RateLimit-Remaining-Reads"
+    - "X-RateLimit-Remaining-Writes"
+    - "X-TokenBudget-Remaining"
+    - "X-TokenBudget-Used"
+    - "X-TokenBudget-Percent"
+    - "X-Operation-Type"
+    - "X-Operation-Cost"
