@@ -1,5 +1,7 @@
 # Name-that-face 🔍
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 Deepfake detection as a service. Upload a selfie and a government ID photo — [DeepFace](https://github.com/serengil/deepface) (ArcFace model) verifies the faces match. Every request goes through Duo 2FA step-up authentication and a token-bucket rate limiter.
 
 ---
