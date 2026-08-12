@@ -43,7 +43,8 @@ name-that-face/
 │   └── integration/                # @pytest.mark.integration — full FastAPI
 │       ├── test_api_auth.py
 │       ├── test_api_2fa.py
-│       └── test_api_photo.py
+│       ├── test_api_photo.py
+│       └── test_security_pentest.py # 6 security regression tests
 ├── config/config.yml               # Token types, scopes, rate-limit config
 ├── scripts/validate_2fa_flow.py    # Manual end-to-end 2FA script
 ├── tasks.py                        # Invoke task runner (inv serve, inv test …)
@@ -142,9 +143,9 @@ Every call prints a summary table, the raw JWT, and a ready-to-paste `curl` exam
 
 | Command | What it does |
 |---------|-------------|
-| `poetry run inv test` | All 67 tests |
-| `poetry run inv test --unit` | 49 unit tests (~0.7s, no I/O) |
-| `poetry run inv test --integration` | 18 integration tests (full FastAPI) |
+| `poetry run inv test` | All 78 tests |
+| `poetry run inv test --unit` | 54 unit tests (~0.7s, no I/O) |
+| `poetry run inv test --integration` | 24 integration tests (full FastAPI, incl. 6 security tests) |
 | `poetry run inv test --coverage` | All tests + HTML report in `htmlcov/` |
 | `poetry run inv test --verbose` | Any of the above with `-v` |
 
@@ -244,6 +245,16 @@ docker compose logs -f api   # tail JSON logs
 2. **Applications → Protect an Application → Auth API → Protect**
 3. Copy **Integration key**, **Secret key**, **API hostname** into `.env`
 4. Under **Users**, add a user matching `USERNAME` in `src/client.py` (default: `me@lorenamesa.com`) and enroll a device
+
+---
+
+## Security
+
+See [docs/SECURITY.md](docs/SECURITY.md) for:
+- Security test suite (6 regression tests)
+- 2FA flow validation script
+- JWT and IP binding implementation details
+- Security checklist for production deployment
 
 ---
 

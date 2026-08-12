@@ -22,20 +22,24 @@ import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 
 from fraud_detection_service import FraudDetectionResult
+from settings import Settings
 
-SECRET = "replace-me-with-a-real-secret-in-env"  # must match settings.py default
+# Read the actual SECRET_KEY from settings (which loads from .env)
+_settings = Settings()
+SECRET = _settings.SECRET_KEY
 ALGO = "HS256"
 USER_ID = "test-user-1"
 
 
 def _jwt(scope: str, step_up: bool = False, exp_delta: timedelta = timedelta(minutes=30)) -> str:
+    expire = datetime.now(timezone.utc) + exp_delta
     return pyjwt.encode(
         {
             "sub": USER_ID,
             "username": "test@example.com",
             "scope": scope,
             "step_up": step_up,
-            "exp": datetime.now(timezone.utc) + exp_delta,
+            "exp": int(expire.timestamp()),
         },
         SECRET,
         algorithm=ALGO,

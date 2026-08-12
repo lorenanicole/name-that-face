@@ -49,6 +49,13 @@ jobs:
       - name: Install dependencies
         run: poetry install --without deepface
 
+      - name: Generate test secrets
+        run: |
+          echo "SECRET_KEY=$(python3 -c 'import secrets; print(secrets.token_urlsafe(32))')" >> $GITHUB_ENV
+          echo "DUO_INTEGRATION_KEY=test_ikey" >> $GITHUB_ENV
+          echo "DUO_SECRET_KEY=test_skey" >> $GITHUB_ENV
+          echo "DUO_API_HOST=api-test.duosecurity.com" >> $GITHUB_ENV
+
       - name: Lint (ruff)
         run: poetry run inv lint
 

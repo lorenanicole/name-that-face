@@ -1,9 +1,15 @@
 import os
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 import jwt
 import requests
 import streamlit as st
+from dotenv import load_dotenv
+
+# Load .env file from repo root
+env_path = Path(__file__).parent.parent / ".env"
+load_dotenv(env_path)
 
 BASE_URL = os.environ.get("API_BASE_URL", "http://localhost:8000")
 JWT_SECRET = os.environ.get("SECRET_KEY", "replace-me-with-a-real-secret-in-env")
@@ -14,13 +20,14 @@ PAYLOAD = {"name": "Lorena Mesa", "email": "me@lorenamesa.com", "age": 39}
 
 
 def generate_token():
+    expire = datetime.now(timezone.utc) + timedelta(minutes=30)
     return jwt.encode(
         {
             "sub": USER_ID,
             "username": USERNAME,
             "scope": "user:write",
             "step_up": False,
-            "exp": datetime.now(timezone.utc) + timedelta(minutes=30),
+            "exp": int(expire.timestamp()),
         },
         JWT_SECRET,
         algorithm=JWT_ALGORITHM,

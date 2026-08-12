@@ -3,6 +3,7 @@ from datetime import datetime, timedelta, timezone
 import jwt
 from fastapi import Request
 
+from models import TokenClaims
 from settings import Settings
 
 
@@ -67,7 +68,7 @@ class TokenService:
             "username": username,
             "scope": scope,
             "step_up": step_up,
-            "exp": expire,
+            "exp": int(expire.timestamp()),
         }
         return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
 
@@ -89,7 +90,7 @@ class TokenService:
         new_expire = datetime.now(timezone.utc) + timedelta(
             minutes=_settings.ACCESS_TOKEN_EXPIRE_MINUTES
         )
-        claims["exp"] = new_expire
+        claims["exp"] = int(new_expire.timestamp())
 
         return jwt.encode(claims, SECRET_KEY, algorithm=ALGORITHM)
 
@@ -102,23 +103,23 @@ class TokenService:
         """
         expire = datetime.now(timezone.utc) + timedelta(minutes=5)
         payload = {
-            "typ": "step_up_challenge",
-            "sub": claims["sub"],  # user_id
+            "type": "set_up_challenge",
+            "sub": claims["sub"],
             "username": claims.get("username", ""),
             "client_ip": client_ip,
-            "required_scope": required_scope,  # e.g. "user:write"
+            "required_scope": required_scope,
             "next": next_url,
-            "exp": expire,
+            "exp": int(expire.timestamp()),
         }
         return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
 
-    def decode_step_up_challenge(self, token: str) -> dict:
+    def decode_step_up_challenge(self, token: str) -> TokenClaims:
         try:
             claims = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         except jwt.ExpiredSignatureError:
             raise TokenError("Challenge expired")
         except jwt.InvalidTokenError:
             raise TokenError("Invalid challenge token")
-        if claims.get("typ") != "step_up_challenge":
+        if claims.get("type") != "set_up_challenge":
             raise TokenError("Not a challenge token")
-        return claims
+        return TokenClaims.model_validate(claims)

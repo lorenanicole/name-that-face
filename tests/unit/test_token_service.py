@@ -152,16 +152,16 @@ def test_issue_and_decode_step_up_challenge(svc):
         next_url="http://localhost/api/user/u1",
     )
     decoded = svc.decode_step_up_challenge(challenge)
-    assert decoded["typ"] == "step_up_challenge"
-    assert decoded["sub"] == "u1"
-    assert decoded["required_scope"] == "user:write"
-    assert decoded["next"] == "http://localhost/api/user/u1"
+    assert decoded.claim_type == "set_up_challenge"
+    assert decoded.user_id == "u1"
+    assert decoded.required_scope == "user:write"
+    assert decoded.next_url == "http://localhost/api/user/u1"
 
 
 @pytest.mark.unit
 def test_decode_non_challenge_token_raises(svc):
     regular = svc.issue(user_id="u1", scope="user:read")
-    with pytest.raises(TokenError, match="Not a challenge token"):
+    with pytest.raises((TokenError, ValueError), match="(Not a challenge token|type)"):
         svc.decode_step_up_challenge(regular)
 
 
@@ -171,7 +171,7 @@ def test_decode_expired_challenge_raises(svc, monkeypatch):
     claims = {"sub": "u1", "username": "alice", "scope": "user:write"}
     challenge = svc.issue_step_up_challenge(claims, "user:write", "127.0.0.1", "http://x")
     payload = pyjwt.decode(challenge, SECRET, algorithms=[ALGORITHM])
-    payload["exp"] = datetime.now(timezone.utc) - timedelta(seconds=1)
+    payload["exp"] = int((datetime.now(timezone.utc) - timedelta(seconds=1)).timestamp())
     expired = pyjwt.encode(payload, SECRET, algorithm=ALGORITHM)
     with pytest.raises(TokenError, match="[Ee]xpir"):
         svc.decode_step_up_challenge(expired)

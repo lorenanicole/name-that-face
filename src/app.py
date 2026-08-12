@@ -93,39 +93,73 @@ async def update_user(request: Request, user_id: str, body: UserRequest):
 
 
 @app.post("/login-2fa")
-async def login_2fa(request: LoginRequest):
+async def login_2fa(request: Request, login_data: LoginRequest):
+    # Resolve the server-observed remote IP (do NOT trust client-supplied values)
+    server_ip = request.client.host if request.client else "unknown"
+    if x_forwarded := request.headers.get("x-forwarded-for"):
+        server_ip = x_forwarded.split(",")[0].strip()
+
     # 1. decode the challenge to get user_id, username, required_scope, and next url
     try:
-        ctx = token_service.decode_step_up_challenge(request.challenge)
+        claims = token_service.decode_step_up_challenge(login_data.challenge)
     except TokenError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+    # 1b. validate that the request comes from the same IP that the challenge was issued for
+    if server_ip != claims.client_ip:
+        logger.info(
+            "login.client_ip.invalid",
+            request_user_id=claims.user_id,
+            request_username=claims.username,
+            server_resolved_ip=server_ip,
+            bound_client_ip=claims.client_ip,
+        )
+        raise HTTPException(status_code=401, detail="Client IP does not match challenge binding")
 
     # 2. send Duo push to the user
     try:
         check_user = duo_auth.auth(
-            username=ctx["username"],
+            username=claims.username,
             factor="push",
             device="auto",
-            ipaddr=request.client_ip,
+            ipaddr=server_ip,
         )
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Duo error: {e}")
+        logger.info(
+            "login.duo.push.fail",
+            request_user_id=claims.user_id,
+            request_username=claims.username,
+            method="push",
+            device="auto",
+            server_resolved_ip=server_ip,
+            error=str(e),
+        )
+        raise HTTPException(status_code=500, detail="2FA provider error")
 
     # 3. evaluate Duo's response
     if check_user.get("result") == "allow":
         elevated_token = token_service.issue(
-            user_id=ctx["sub"],
-            scope=ctx["required_scope"],
+            user_id=claims.user_id,
+            scope=claims.required_scope,
             step_up=True,
         )
         return JSONResponse(
             status_code=200,
             content={
                 "elevated_token": elevated_token,
-                "redirect_to": ctx["next"],
+                "redirect_to": claims.next_url,
             },
         )
     else:
+        logger.info(
+            "login.duo.auth.fail",
+            request_user_id=claims.user_id,
+            request_username=claims.username,
+            method="push",
+            device="auto",
+            server_resolved_ip=server_ip,
+            two_fa_error=check_user.get("status_msg"),
+        )
         raise HTTPException(status_code=401, detail=f"2FA Denied: {check_user.get('status_msg')}")
 
 

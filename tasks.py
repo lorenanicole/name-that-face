@@ -66,7 +66,7 @@ def ngrok(c, port=8501, url=False):
             print("\n  No ngrok tunnel running. Start one with: inv ngrok\n")
         return
 
-    c.run(f"ngrok http {port}", pty=False)
+    c.run(f"ngrok http {port}", pty=True)
 
 
 @task(
