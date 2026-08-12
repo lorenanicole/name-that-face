@@ -27,11 +27,14 @@ import time
 from dataclasses import dataclass
 from typing import Callable, Optional
 
+import structlog
 from fastapi import Request
 from fastapi.responses import JSONResponse, RedirectResponse
 
 from dependencies import token_config, token_service  # noqa: E402
 from token_service import TokenError  # noqa: E402
+
+logger = structlog.get_logger(__name__)
 
 
 @dataclass
@@ -267,9 +270,33 @@ def rate_limit(key, max_requests: Optional[int] = None):
 
             # -- 4. check if step-up 2FA is required for this scope ---
             if not claims.get("step_up") and scope in ("write", "delete", "admin"):
+                client_ip = ""
+                try:
+                    x_forwarded_for = request.headers.get("x-forwarded-for")
+
+                    if x_forwarded_for:
+                        # The header can contain a comma-separated list of proxy IPs;
+                        # the first element is always the original client IP.
+                        client_ip = x_forwarded_for.split(",")[0].strip()
+                    else:
+                        # Fallback to direct client host if header is missing
+                        client_ip = request.client.host
+                    logger.info(
+                        "audit_log.written",
+                        user_id=claims.get("sub"),
+                        client_ip=f"Client IP Resolved: {client_ip}",
+                    )
+                except AttributeError:
+                    logger.info(
+                        "audit_log.written",
+                        user_id=claims.get("sub"),
+                        client_ip="Client IP Invalid",
+                    )
+
                 challenge_token = token_service.issue_step_up_challenge(
                     claims=claims,
                     required_scope=key,
+                    client_ip=client_ip,
                     next_url=str(request.url),
                 )
                 return RedirectResponse(

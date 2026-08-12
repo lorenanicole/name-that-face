@@ -93,7 +93,9 @@ class TokenService:
 
         return jwt.encode(claims, SECRET_KEY, algorithm=ALGORITHM)
 
-    def issue_step_up_challenge(self, claims: dict, required_scope: str, next_url: str) -> str:
+    def issue_step_up_challenge(
+        self, claims: dict, required_scope: str, client_ip: str, next_url: str
+    ) -> str:
         """
         Issue a short-lived challenge token encoding the context needed
         for the 2FA flow. Not an access token — cannot be used to call APIs.
@@ -103,6 +105,7 @@ class TokenService:
             "typ": "step_up_challenge",
             "sub": claims["sub"],  # user_id
             "username": claims.get("username", ""),
+            "client_ip": client_ip,
             "required_scope": required_scope,  # e.g. "user:write"
             "next": next_url,
             "exp": expire,

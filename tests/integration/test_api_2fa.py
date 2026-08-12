@@ -40,7 +40,7 @@ async def test_login_2fa_approved_returns_elevated_token(client, write_token, mo
     challenge = resp.headers["location"].split("challenge=")[-1].split("&")[0]
 
     # Step 2: complete 2FA (mock_duo already returns allow)
-    resp2 = await ac.post("/login-2fa", json={"challenge": challenge})
+    resp2 = await ac.post("/login-2fa", json={"challenge": challenge, "client_ip": "127.0.0.1"})
     assert resp2.status_code == 200
     data = resp2.json()
     assert "elevated_token" in data
@@ -62,14 +62,16 @@ async def test_login_2fa_denied_returns_401(client, write_token):
     denied_duo.auth.return_value = {"result": "deny", "status_msg": "Denied"}
 
     with patch("app.duo_auth", denied_duo):
-        resp2 = await ac.post("/login-2fa", json={"challenge": challenge})
+        resp2 = await ac.post("/login-2fa", json={"challenge": challenge, "client_ip": "127.0.0.1"})
     assert resp2.status_code == 401
 
 
 @pytest.mark.integration
 async def test_login_2fa_invalid_challenge_returns_400(client):
     ac, _ = client
-    resp = await ac.post("/login-2fa", json={"challenge": "garbage.token.value"})
+    resp = await ac.post(
+        "/login-2fa", json={"challenge": "garbage.token.value", "client_ip": "127.0.0.1"}
+    )
     assert resp.status_code == 400
 
 
@@ -88,5 +90,5 @@ async def test_login_2fa_duo_error_returns_500(client, write_token):
     broken_duo.auth.side_effect = Exception("Duo API unreachable")
 
     with patch("app.duo_auth", broken_duo):
-        resp2 = await ac.post("/login-2fa", json={"challenge": challenge})
+        resp2 = await ac.post("/login-2fa", json={"challenge": challenge, "client_ip": "127.0.0.1"})
     assert resp2.status_code == 500

@@ -6,20 +6,28 @@ Import this module early (done in dependencies.py) so every subsequent
 
 Pipeline:
   - Adds log level, logger name, and timestamp to every event dict
-  - In development (LOG_FORMAT=pretty or unset): coloured, aligned console output
-  - In production (LOG_FORMAT=json): newline-delimited JSON to stdout, suitable
-    for Datadog / CloudWatch / any log aggregator
+  - stdout: coloured, aligned console output in dev (LOG_FORMAT=pretty or unset);
+            newline-delimited JSON in production (LOG_FORMAT=json)
+  - file:   always newline-delimited JSON, written to AUDIT_LOG_PATH so audit
+            events are durably recorded regardless of LOG_FORMAT
 """
 
 import logging
 import os
 import sys
+from pathlib import Path
 
 import structlog
 
 
-def configure() -> None:
-    """Wire stdlib logging → structlog and set the shared processor chain."""
+def configure(audit_log_path: Path | None = None) -> None:
+    """Wire stdlib logging → structlog and set the shared processor chain.
+
+    Args:
+        audit_log_path: If provided, a JSON FileHandler is added that writes
+                        every log record to this file in addition to stdout.
+                        The parent directory is created if it does not exist.
+    """
 
     log_format = os.getenv("LOG_FORMAT", "pretty").lower()
     log_level_name = os.getenv("LOG_LEVEL", "INFO").upper()
@@ -36,9 +44,9 @@ def configure() -> None:
     ]
 
     if log_format == "json":
-        renderer = structlog.processors.JSONRenderer()
+        stdout_renderer = structlog.processors.JSONRenderer()
     else:
-        renderer = structlog.dev.ConsoleRenderer(colors=sys.stderr.isatty())
+        stdout_renderer = structlog.dev.ConsoleRenderer(colors=sys.stderr.isatty())
 
     structlog.configure(
         processors=shared_processors
@@ -51,20 +59,34 @@ def configure() -> None:
         cache_logger_on_first_use=True,
     )
 
-    formatter = structlog.stdlib.ProcessorFormatter(
-        # Processors that run only in the formatter (after stdlib hand-off)
+    # --- stdout handler (pretty in dev, JSON in prod) ---
+    stdout_formatter = structlog.stdlib.ProcessorFormatter(
         foreign_pre_chain=shared_processors,
         processors=[
             structlog.stdlib.ProcessorFormatter.remove_processors_meta,
-            renderer,
+            stdout_renderer,
         ],
     )
-
-    handler = logging.StreamHandler(sys.stdout)
-    handler.setFormatter(formatter)
+    stdout_handler = logging.StreamHandler(sys.stdout)
+    stdout_handler.setFormatter(stdout_formatter)
 
     root_logger = logging.getLogger()
     # Remove any handlers uvicorn/other libs added before us
     root_logger.handlers.clear()
-    root_logger.addHandler(handler)
+    root_logger.addHandler(stdout_handler)
+
+    # --- file handler (always JSON) ---
+    if audit_log_path is not None:
+        audit_log_path.parent.mkdir(parents=True, exist_ok=True)
+        file_formatter = structlog.stdlib.ProcessorFormatter(
+            foreign_pre_chain=shared_processors,
+            processors=[
+                structlog.stdlib.ProcessorFormatter.remove_processors_meta,
+                structlog.processors.JSONRenderer(),
+            ],
+        )
+        file_handler = logging.FileHandler(audit_log_path, encoding="utf-8")
+        file_handler.setFormatter(file_formatter)
+        root_logger.addHandler(file_handler)
+
     root_logger.setLevel(log_level)

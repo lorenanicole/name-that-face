@@ -25,6 +25,8 @@ class Settings(BaseSettings):
     DUO_SECRET_KEY: str = ""
     DUO_API_HOST: str = ""
 
+    AUDIT_LOG_PATH: Path = Path(__file__).parent.parent / "logs" / "audit_log.jsonl"
+
     # Path to the token config YAML (can be overridden via env var)
     TOKEN_CONFIG_PATH: str = _DEFAULT_CONFIG_PATH
 

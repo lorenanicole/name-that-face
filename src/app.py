@@ -1,8 +1,6 @@
 import base64
 import json
-import os
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Optional
 
 import structlog
@@ -11,16 +9,16 @@ from fastapi.responses import JSONResponse  # noqa: E402
 from fastapi.security import HTTPBearer  # noqa: E402
 from pydantic import BaseModel  # noqa: E402
 
-from dependencies import duo_auth, fraud_service, token_service  # noqa: E402
+from dependencies import duo_auth, fraud_service, settings, token_service  # noqa: E402
 from models import UserRequest  # noqa: E402
 from rate_limiter import rate_limit  # noqa: E402
 from token_service import TokenError  # noqa: E402
 
-AUDIT_LOG_PATH = Path(
-    os.environ.get("AUDIT_LOG_PATH", str(Path(__file__).parent.parent / "logs" / "audit_log.jsonl"))
-)
+AUDIT_LOG_PATH = settings.AUDIT_LOG_PATH
 
 logger = structlog.get_logger(__name__)
+
+logger.info(f"Starting logging at {AUDIT_LOG_PATH}")
 
 # Swagger UI "Authorize" button — sends Authorization: Bearer <token>
 # The actual validation is done by the rate_limit decorator; this only
@@ -96,6 +94,7 @@ async def update_user(request: Request, user_id: str, body: UserRequest):
 
 class LoginRequest(BaseModel):
     challenge: str  # signed challenge token issued by rate_limiter on step-up redirect
+    client_ip: str  # client ip
 
 
 @app.post("/login-2fa")
@@ -112,6 +111,7 @@ async def login_2fa(request: LoginRequest):
             username=ctx["username"],
             factor="push",
             device="auto",
+            ipaddr=request.client_ip,
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Duo error: {e}")

@@ -146,7 +146,10 @@ def test_refresh_invalid_token_raises(svc):
 def test_issue_and_decode_step_up_challenge(svc):
     claims = {"sub": "u1", "username": "alice@example.com", "scope": "user:write"}
     challenge = svc.issue_step_up_challenge(
-        claims, required_scope="user:write", next_url="http://localhost/api/user/u1"
+        claims,
+        required_scope="user:write",
+        client_ip="127.0.0.1",
+        next_url="http://localhost/api/user/u1",
     )
     decoded = svc.decode_step_up_challenge(challenge)
     assert decoded["typ"] == "step_up_challenge"
@@ -166,7 +169,7 @@ def test_decode_non_challenge_token_raises(svc):
 def test_decode_expired_challenge_raises(svc, monkeypatch):
     # Issue a challenge then backdate its expiry
     claims = {"sub": "u1", "username": "alice", "scope": "user:write"}
-    challenge = svc.issue_step_up_challenge(claims, "user:write", "http://x")
+    challenge = svc.issue_step_up_challenge(claims, "user:write", "127.0.0.1", "http://x")
     payload = pyjwt.decode(challenge, SECRET, algorithms=[ALGORITHM])
     payload["exp"] = datetime.now(timezone.utc) - timedelta(seconds=1)
     expired = pyjwt.encode(payload, SECRET, algorithm=ALGORITHM)

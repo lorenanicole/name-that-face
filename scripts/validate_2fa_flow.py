@@ -7,18 +7,31 @@ End-to-end validation script for the 2FA step-up flow.
 Flow:
   1. POST /api/user/{user_id} with a non-step-up write token
      → 307 redirect with a signed challenge token in the Location header
-  2. POST /login-2fa with the challenge token
-     → Duo push sent to phone; approve it within 60 seconds
+  2. POST /login-2fa with the challenge token + client_ip
+     → Real mode: Duo push sent to phone; approve within 60 seconds
+     → Mock mode: auto-approved, no phone needed
      → 200 OK with { "elevated_token": "...", "redirect_to": "..." }
   3. POST redirect_to with the elevated token
      → 200 OK with the updated user data
+
+Usage:
+  # Real Duo demo — hits a running server at localhost:8000, sends a live push:
+  python scripts/validate_2fa_flow.py
+
+  # Mock-Duo mode — runs ASGI app in-process, auto-approves; no server or phone needed:
+  python scripts/validate_2fa_flow.py --mock-duo
+
+  # Override the client IP forwarded to Duo (defaults to your machine's public IP):
+  python scripts/validate_2fa_flow.py --client-ip 203.0.113.5
 """
 
+import argparse
 import os
+import sys
 from datetime import datetime, timedelta, timezone
+from unittest.mock import MagicMock, patch
 
 import jwt
-import requests
 
 # ---------------------------------------------------------------------------
 # Config
@@ -30,6 +43,27 @@ JWT_ALGORITHM = "HS256"
 USER_ID = "1"
 USERNAME = "me@lorenamesa.com"
 PAYLOAD = {"name": "Lorena Mesa", "email": "me@lorenamesa.com", "age": 39}
+
+# Default client IP for local runs (loopback is always safe for Duo ipaddr)
+DEFAULT_CLIENT_IP = "127.0.0.1"
+
+
+def _resolve_public_ip() -> str:
+    """Return the public IP of this machine by querying ipify, falling back to 127.0.0.1."""
+    import requests as _requests
+
+    try:
+        ip = _requests.get("https://api.ipify.org", timeout=3).text.strip()
+        print(f"ℹ️  Resolved public IP: {ip}")
+        return ip
+    except Exception:
+        print("⚠️  Could not resolve public IP — falling back to 127.0.0.1")
+        return DEFAULT_CLIENT_IP
+
+
+# ---------------------------------------------------------------------------
+# Token generation
+# ---------------------------------------------------------------------------
 
 
 def generate_token() -> str:
@@ -47,71 +81,203 @@ def generate_token() -> str:
     )
 
 
-def step1_get_challenge(token: str) -> str:
+# ---------------------------------------------------------------------------
+# Steps — transport-agnostic (work with requests.Session or httpx.Client)
+# ---------------------------------------------------------------------------
+
+
+def step1_get_challenge(client, token: str) -> str:
     """POST /api/user/{user_id} and extract the challenge token from the 307 redirect."""
     print("\n--- Step 1: POST /api/user/{user_id} (step_up=False) ---")
-    resp = requests.post(
+    resp = client.post(
         f"{BASE_URL}/api/user/{USER_ID}",
         json=PAYLOAD,
         headers={"Authorization": f"Bearer {token}"},
-        allow_redirects=False,
     )
     print(f"Status: {resp.status_code}")
-    assert resp.status_code == 307, f"Expected 307, got {resp.status_code}: {resp.text}"
+    if resp.status_code != 307:
+        print(f"Response body: {resp.text}")
+        sys.exit(f"❌ Expected 307, got {resp.status_code}")
 
     location = resp.headers.get("location", "")
     print(f"Location: {location}")
-
     challenge = location.split("challenge=")[-1].split("&")[0]
-    assert challenge, "Challenge token not found in Location header"
+    if not challenge:
+        sys.exit("❌ Challenge token not found in Location header")
+
     print(f"Challenge token: {challenge[:40]}...")
     return challenge
 
 
-def step2_duo_push(challenge: str) -> tuple[str, str]:
-    """POST /login-2fa with the challenge; waits for Duo push approval."""
-    print("\n--- Step 2: POST /login-2fa (approve Duo push on your phone!) ---")
-    resp = requests.post(
+def step2_duo_push(client, challenge: str, client_ip: str, mock: bool = False) -> tuple[str, str]:
+    """POST /login-2fa with the challenge token and client_ip."""
+    print("\n--- Step 2: POST /login-2fa ---")
+    print(f"client_ip sent to Duo: {client_ip}")
+
+    if mock:
+        print("⚠️  Mock mode: auto-approving Duo push...")
+    else:
+        print("📱 Sending Duo push to your phone — approve it now to continue...")
+        print("   (waiting for push approval — this call blocks until you respond)")
+
+    resp = client.post(
         f"{BASE_URL}/login-2fa",
-        json={"challenge": challenge},
+        json={"challenge": challenge, "client_ip": client_ip},
     )
     print(f"Status: {resp.status_code}")
-    assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
+    if resp.status_code != 200:
+        print(f"Response body: {resp.text}")
+        sys.exit(f"❌ Expected 200, got {resp.status_code}")
 
     data = resp.json()
+    print("✅ Duo push approved!")
     print(f"elevated_token: {data['elevated_token'][:40]}...")
     print(f"redirect_to:    {data['redirect_to']}")
     return data["elevated_token"], data["redirect_to"]
 
 
-def step3_elevated_request(elevated_token: str, redirect_to: str) -> dict:
+def step3_elevated_request(client, elevated_token: str, redirect_to: str) -> dict:
     """POST redirect_to with the elevated token; expect 200 OK with user data."""
     print("\n--- Step 3: POST redirect_to with elevated token ---")
-    resp = requests.post(
-        redirect_to,
+    # redirect_to may be an absolute URL; strip host so in-process client resolves correctly.
+    path = redirect_to.replace(BASE_URL, "")
+    url = f"{BASE_URL}{path}" if not path.startswith("http") else path
+    resp = client.post(
+        url,
         json=PAYLOAD,
         headers={"Authorization": f"Bearer {elevated_token}"},
     )
     print(f"Status: {resp.status_code}")
-    assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
+    if resp.status_code != 200:
+        print(f"Response body: {resp.text}")
+        sys.exit(f"❌ Expected 200, got {resp.status_code}")
 
     data = resp.json()
     print(f"Response: {data}")
     return data
 
 
+# ---------------------------------------------------------------------------
+# Transport implementations
+# ---------------------------------------------------------------------------
+
+
+def _real_client():
+    """
+    Thin wrapper around requests.Session that disables automatic redirect
+    following so step 1 can capture the raw 307 response.
+    """
+    import requests
+
+    session = requests.Session()
+
+    class _NoRedirectSession:
+        def post(self, url, **kwargs):
+            kwargs.setdefault("allow_redirects", False)
+            return session.post(url, **kwargs)
+
+    return _NoRedirectSession()
+
+
+def _mock_duo_client():
+    """
+    httpx.Client backed by the FastAPI ASGI app in-process, with duo_auth
+    patched to auto-approve and fraud_service patched to return a clean result.
+    No running server or phone required.
+    """
+    import httpx
+
+    from fraud_detection_service import FraudDetectionResult
+
+    mock_duo = MagicMock()
+    mock_duo.auth.return_value = {"result": "allow", "status": "allow", "status_msg": "Pushed"}
+
+    mock_fraud = MagicMock()
+    mock_fraud.verify.return_value = FraudDetectionResult(
+        verified=True,
+        is_deepfake=False,
+        confidence=0.95,
+        distance=0.20,
+        threshold=0.68,
+        signals=["Face match confirmed (distance=0.200, threshold=0.680)"],
+        selfie_hash="mock-selfie-hash",
+        gov_id_hash="mock-gov-id-hash",
+    )
+
+    # Start patches before importing app so the module-level singletons are replaced.
+    active_patches = [
+        patch("dependencies.duo_auth", mock_duo),
+        patch("app.duo_auth", mock_duo),
+        patch("dependencies.fraud_service", mock_fraud),
+        patch("app.fraud_service", mock_fraud),
+    ]
+    for p in active_patches:
+        p.start()
+
+    from app import app as fastapi_app
+
+    client = httpx.Client(
+        transport=httpx.ASGITransport(app=fastapi_app),
+        base_url=BASE_URL,
+        follow_redirects=False,  # step 1 must capture the raw 307
+    )
+    return client, active_patches
+
+
+# ---------------------------------------------------------------------------
+# Entry point
+# ---------------------------------------------------------------------------
+
+
 def main():
+    parser = argparse.ArgumentParser(description="Validate the 2FA step-up flow end-to-end.")
+    parser.add_argument(
+        "--mock-duo",
+        action="store_true",
+        help=(
+            "Run in-process with a mocked Duo that auto-approves. "
+            "No running server or phone needed — ideal for local dev."
+        ),
+    )
+    parser.add_argument(
+        "--client-ip",
+        default=None,
+        metavar="IP",
+        help="Client IP forwarded to Duo ipaddr (default: auto-resolved public IP of this machine).",
+    )
+    args = parser.parse_args()
+
+    # Resolve client IP: explicit flag wins; otherwise look up the machine's real public IP.
+    client_ip = args.client_ip or _resolve_public_ip()
+
     print("=== 2FA Step-Up Flow Validation ===")
 
-    token = generate_token()
-    print(f"Generated token: {token[:40]}...")
+    active_patches = []
+    if args.mock_duo:
+        print("⚠️  Mock-Duo mode: Duo push will be auto-approved (no phone or server needed).")
+        # Ensure src/ is on the path when running from the repo root.
+        src_path = os.path.join(os.path.dirname(__file__), "..", "src")
+        sys.path.insert(0, os.path.abspath(src_path))
+        client, active_patches = _mock_duo_client()
+    else:
+        print(f"🔒 Real-Duo mode: approve the push on your phone. Server: {BASE_URL}")
+        client = _real_client()
 
-    challenge = step1_get_challenge(token)
-    elevated_token, redirect_to = step2_duo_push(challenge)
-    result = step3_elevated_request(elevated_token, redirect_to)
+    try:
+        token = generate_token()
+        print(f"Generated token: {token[:40]}...")
 
-    print("\n✅ Full 2FA flow completed successfully!")
-    print(f"   Final response: {result}")
+        challenge = step1_get_challenge(client, token)
+        elevated_token, redirect_to = step2_duo_push(
+            client, challenge, client_ip=client_ip, mock=args.mock_duo
+        )
+        result = step3_elevated_request(client, elevated_token, redirect_to)
+
+        print("\n✅ Full 2FA flow completed successfully!")
+        print(f"   Final response: {result}")
+    finally:
+        for p in active_patches:
+            p.stop()
 
 
 if __name__ == "__main__":

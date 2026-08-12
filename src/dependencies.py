@@ -10,28 +10,27 @@ Import pattern:
 
 import duo_client
 
-# Configure structlog/stdlib logging before anything else imports logging
 import logging_config
-
-logging_config.configure()
-
 from fraud_detection_service import FraudDetectionService  # noqa: E402
 from settings import Settings, TokenConfig  # noqa: E402
 from token_service import TokenService  # noqa: E402
 
-# 1. App settings (env vars / .env)
+# 1. App settings (env vars / .env) — must come first so AUDIT_LOG_PATH is available
 settings = Settings()
 
-# 2. Token config (parsed from config.yml)
+# 2. Configure structlog/stdlib logging now that we have the path from settings
+logging_config.configure(audit_log_path=settings.AUDIT_LOG_PATH)
+
+# 3. Token config (parsed from config.yml)
 token_config = TokenConfig(settings.TOKEN_CONFIG_PATH)
 
-# 3. Token service (depends on token_config)
+# 4. Token service (depends on token_config)
 token_service = TokenService(token_config)
 
-# 4. Duo Auth
+# 5. Duo Auth
 duo_auth = duo_client.Auth(
     ikey=settings.DUO_INTEGRATION_KEY, skey=settings.DUO_SECRET_KEY, host=settings.DUO_API_HOST
 )
 
-# 5. Fraud detection service
+# 6. Fraud detection service
 fraud_service = FraudDetectionService()
