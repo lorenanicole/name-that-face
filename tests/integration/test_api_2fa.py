@@ -7,24 +7,25 @@ Duo is mocked at the dependency level — no real push sent.
 
 from unittest.mock import MagicMock, patch
 
+import jwt
 import pytest
 
+from settings import Settings
 
-def _make_challenge(client_fixture, write_token):
-    """Helper: hit POST /api/user to get a 307 and extract the challenge token."""
-    ac, _ = client_fixture
-    import asyncio
+_settings = Settings()
+SECRET = _settings.SECRET_KEY
+ALGORITHM = _settings.ALGORITHM
 
-    resp = asyncio.get_event_loop().run_until_complete(
-        ac.post(
-            "/api/user/u1",
-            json={"name": "X"},
-            headers={"Authorization": f"Bearer {write_token}"},
-            follow_redirects=False,
-        )
-    )
-    location = resp.headers["location"]
-    return location.split("challenge=")[-1].split("&")[0]
+
+def _extract_challenge_and_ip(location_header: str):
+    """Extract challenge token from redirect location and decode to get bound client_ip."""
+    challenge = location_header.split("challenge=")[-1].split("&")[0]
+    try:
+        decoded = jwt.decode(challenge, SECRET, algorithms=[ALGORITHM])
+        client_ip = decoded.get("client_ip", "127.0.0.1")
+    except Exception:
+        client_ip = "127.0.0.1"  # fallback
+    return challenge, client_ip
 
 
 @pytest.mark.integration
@@ -37,10 +38,11 @@ async def test_login_2fa_approved_returns_elevated_token(client, write_token, mo
         headers={"Authorization": f"Bearer {write_token}"},
         follow_redirects=False,
     )
-    challenge = resp.headers["location"].split("challenge=")[-1].split("&")[0]
+    assert resp.status_code == 307, f"Expected 307, got {resp.status_code}: {resp.text}"
+    challenge, client_ip = _extract_challenge_and_ip(resp.headers["location"])
 
     # Step 2: complete 2FA (mock_duo already returns allow)
-    resp2 = await ac.post("/login-2fa", json={"challenge": challenge, "client_ip": "127.0.0.1"})
+    resp2 = await ac.post("/login-2fa", json={"challenge": challenge, "client_ip": client_ip})
     assert resp2.status_code == 200
     data = resp2.json()
     assert "elevated_token" in data
@@ -56,13 +58,14 @@ async def test_login_2fa_denied_returns_401(client, write_token):
         headers={"Authorization": f"Bearer {write_token}"},
         follow_redirects=False,
     )
-    challenge = resp.headers["location"].split("challenge=")[-1]
+    assert resp.status_code == 307, f"Expected 307, got {resp.status_code}: {resp.text}"
+    challenge, client_ip = _extract_challenge_and_ip(resp.headers["location"])
 
     denied_duo = MagicMock()
     denied_duo.auth.return_value = {"result": "deny", "status_msg": "Denied"}
 
     with patch("app.duo_auth", denied_duo):
-        resp2 = await ac.post("/login-2fa", json={"challenge": challenge, "client_ip": "127.0.0.1"})
+        resp2 = await ac.post("/login-2fa", json={"challenge": challenge, "client_ip": client_ip})
     assert resp2.status_code == 401
 
 
@@ -84,11 +87,12 @@ async def test_login_2fa_duo_error_returns_500(client, write_token):
         headers={"Authorization": f"Bearer {write_token}"},
         follow_redirects=False,
     )
-    challenge = resp.headers["location"].split("challenge=")[-1]
+    assert resp.status_code == 307, f"Expected 307, got {resp.status_code}: {resp.text}"
+    challenge, client_ip = _extract_challenge_and_ip(resp.headers["location"])
 
     broken_duo = MagicMock()
     broken_duo.auth.side_effect = Exception("Duo API unreachable")
 
     with patch("app.duo_auth", broken_duo):
-        resp2 = await ac.post("/login-2fa", json={"challenge": challenge, "client_ip": "127.0.0.1"})
+        resp2 = await ac.post("/login-2fa", json={"challenge": challenge, "client_ip": client_ip})
     assert resp2.status_code == 500

@@ -22,8 +22,11 @@ import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 
 from fraud_detection_service import FraudDetectionResult
+from settings import Settings
 
-SECRET = "replace-me-with-a-real-secret-in-env"  # must match settings.py default
+# Read the actual SECRET_KEY from settings (which loads from .env)
+_settings = Settings()
+SECRET = _settings.SECRET_KEY
 ALGO = "HS256"
 USER_ID = "test-user-1"
 

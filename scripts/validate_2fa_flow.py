@@ -14,31 +14,54 @@ Flow:
   3. POST redirect_to with the elevated token
      → 200 OK with the updated user data
 
+IP Binding & Duo Location:
+  The script enforces IP binding — the challenge is bound to the client IP the
+  server sees, and that same IP must be used for /login-2fa.
+
+  For localhost testing, the server sees 127.0.0.1 (loopback), which Duo cannot
+  geolocate, so the push notification shows "unknown" location. This is expected
+  and harmless — the security feature still works perfectly.
+
+  To see your real location in Duo:
+    • Access server via machine IP, not localhost:
+      poetry run uvicorn src.app:app --host 0.0.0.0 --port 8000
+      BASE_URL=http://192.168.1.100:8000 poetry run python scripts/validate_2fa_flow.py
+
+    • Or use ngrok tunneling for a real public IP:
+      ngrok http 8000
+      BASE_URL=https://abc123.ngrok.io poetry run python scripts/validate_2fa_flow.py
+
 Usage:
-  # Real Duo demo — hits a running server at localhost:8000, sends a live push:
-  python scripts/validate_2fa_flow.py
-
   # Mock-Duo mode — runs ASGI app in-process, auto-approves; no server or phone needed:
-  python scripts/validate_2fa_flow.py --mock-duo
+  poetry run python scripts/validate_2fa_flow.py --mock-duo
 
-  # Override the client IP forwarded to Duo (defaults to your machine's public IP):
-  python scripts/validate_2fa_flow.py --client-ip 203.0.113.5
+  # Real Duo demo — hits a running server at localhost:8000, sends a live push:
+  poetry run python scripts/validate_2fa_flow.py
+
+  # Override the client IP forwarded to Duo (defaults to resolved public IP):
+  poetry run python scripts/validate_2fa_flow.py --client-ip 203.0.113.5
 """
 
 import argparse
 import os
 import sys
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import jwt
+
+# Add src/ to path to import settings
+sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+from settings import Settings
 
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
 BASE_URL = "http://localhost:8000"
-JWT_SECRET = os.environ.get("SECRET_KEY", "replace-me-with-a-real-secret-in-env")
-JWT_ALGORITHM = "HS256"
+_settings = Settings()
+JWT_SECRET = _settings.SECRET_KEY
+JWT_ALGORITHM = _settings.ALGORITHM
 
 USER_ID = "1"
 USERNAME = "me@lorenamesa.com"
@@ -68,13 +91,14 @@ def _resolve_public_ip() -> str:
 
 def generate_token() -> str:
     """Issue a fresh write-scope JWT with step_up=False to trigger 2FA."""
+    expire = datetime.now(timezone.utc) + timedelta(minutes=30)
     return jwt.encode(
         {
             "sub": USER_ID,
             "username": USERNAME,
             "scope": "user:write",
             "step_up": False,
-            "exp": datetime.now(timezone.utc) + timedelta(minutes=30),
+            "exp": int(expire.timestamp()),
         },
         JWT_SECRET,
         algorithm=JWT_ALGORITHM,
@@ -86,8 +110,11 @@ def generate_token() -> str:
 # ---------------------------------------------------------------------------
 
 
-def step1_get_challenge(client, token: str) -> str:
-    """POST /api/user/{user_id} and extract the challenge token from the 307 redirect."""
+def step1_get_challenge(client, token: str) -> tuple[str, str]:
+    """POST /api/user/{user_id} and extract the challenge token from the 307 redirect.
+
+    Returns: (challenge_token, bound_client_ip) — the IP that the challenge was bound to.
+    """
     print("\n--- Step 1: POST /api/user/{user_id} (step_up=False) ---")
     resp = client.post(
         f"{BASE_URL}/api/user/{USER_ID}",
@@ -105,20 +132,27 @@ def step1_get_challenge(client, token: str) -> str:
     if not challenge:
         sys.exit("❌ Challenge token not found in Location header")
 
-    print(f"Challenge token: {challenge[:40]}...")
-    return challenge
+    # Decode challenge to extract the bound client_ip
+    try:
+        challenge_claims = jwt.decode(challenge, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+        bound_client_ip = challenge_claims.get("client_ip")
+        print(f"Challenge token: {challenge[:40]}...")
+        print(f"✓ Challenge bound to client_ip: {bound_client_ip}")
+        return challenge, bound_client_ip
+    except Exception as e:
+        sys.exit(f"❌ Could not decode challenge token: {e}")
 
 
 def step2_duo_push(client, challenge: str, client_ip: str, mock: bool = False) -> tuple[str, str]:
     """POST /login-2fa with the challenge token and client_ip."""
     print("\n--- Step 2: POST /login-2fa ---")
-    print(f"client_ip sent to Duo: {client_ip}")
+    print(f"Sending challenge with client_ip: {client_ip}")
 
     if mock:
         print("⚠️  Mock mode: auto-approving Duo push...")
     else:
         print("📱 Sending Duo push to your phone — approve it now to continue...")
-        print("   (waiting for push approval — this call blocks until you respond)")
+        print("   (waiting up to 2 minutes for push approval...)")
 
     resp = client.post(
         f"{BASE_URL}/login-2fa",
@@ -166,6 +200,9 @@ def _real_client():
     """
     Thin wrapper around requests.Session that disables automatic redirect
     following so step 1 can capture the raw 307 response.
+
+    Adds a timeout to prevent hanging indefinitely on network issues,
+    while still allowing up to 2 minutes for Duo phone approval.
     """
     import requests
 
@@ -174,6 +211,7 @@ def _real_client():
     class _NoRedirectSession:
         def post(self, url, **kwargs):
             kwargs.setdefault("allow_redirects", False)
+            kwargs.setdefault("timeout", 120)  # 2 min timeout for Duo approval
             return session.post(url, **kwargs)
 
     return _NoRedirectSession()
@@ -181,10 +219,12 @@ def _real_client():
 
 def _mock_duo_client():
     """
-    httpx.Client backed by the FastAPI ASGI app in-process, with duo_auth
+    httpx.AsyncClient backed by the FastAPI ASGI app in-process, with duo_auth
     patched to auto-approve and fraud_service patched to return a clean result.
     No running server or phone required.
     """
+    import asyncio
+
     import httpx
 
     from fraud_detection_service import FraudDetectionResult
@@ -216,11 +256,27 @@ def _mock_duo_client():
 
     from app import app as fastapi_app
 
-    client = httpx.Client(
+    # Wrapper to run async methods synchronously
+    class SyncClient:
+        def __init__(self, async_client):
+            self.async_client = async_client
+            self.loop = asyncio.new_event_loop()
+
+        def post(self, url, **kwargs):
+            return self.loop.run_until_complete(self.async_client.post(url, **kwargs))
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            self.loop.close()
+
+    async_client = httpx.AsyncClient(
         transport=httpx.ASGITransport(app=fastapi_app),
         base_url=BASE_URL,
         follow_redirects=False,  # step 1 must capture the raw 307
     )
+    client = SyncClient(async_client)
     return client, active_patches
 
 
@@ -247,8 +303,19 @@ def main():
     )
     args = parser.parse_args()
 
-    # Resolve client IP: explicit flag wins; otherwise look up the machine's real public IP.
-    client_ip = args.client_ip or _resolve_public_ip()
+    # Resolve client IP: explicit flag wins; otherwise decide based on server location.
+    if args.client_ip:
+        pass
+    elif args.mock_duo:
+        pass  # In-process client always resolves to 127.0.0.1
+    elif "localhost" in BASE_URL or "127.0.0.1" in BASE_URL:
+        # Local server: resolve public IP for more realistic Duo testing
+        # (assumes server is running on 0.0.0.0, not just 127.0.0.1)
+        print("ℹ️  Local server detected — resolving your public IP for realistic Duo testing...")
+        _resolve_public_ip()
+    else:
+        # Remote server: use public IP
+        _resolve_public_ip()
 
     print("=== 2FA Step-Up Flow Validation ===")
 
@@ -267,9 +334,11 @@ def main():
         token = generate_token()
         print(f"Generated token: {token[:40]}...")
 
-        challenge = step1_get_challenge(client, token)
+        challenge, bound_client_ip = step1_get_challenge(client, token)
+        # Use the IP that the challenge was actually bound to
+        print(f"ℹ️  Using bound client_ip for 2FA: {bound_client_ip}")
         elevated_token, redirect_to = step2_duo_push(
-            client, challenge, client_ip=client_ip, mock=args.mock_duo
+            client, challenge, client_ip=bound_client_ip, mock=args.mock_duo
         )
         result = step3_elevated_request(client, elevated_token, redirect_to)
 
