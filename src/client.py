@@ -1,9 +1,15 @@
 import os
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 import jwt
 import requests
 import streamlit as st
+from dotenv import load_dotenv
+
+# Load .env file from repo root
+env_path = Path(__file__).parent.parent / ".env"
+load_dotenv(env_path)
 
 BASE_URL = os.environ.get("API_BASE_URL", "http://localhost:8000")
 JWT_SECRET = os.environ.get("SECRET_KEY", "replace-me-with-a-real-secret-in-env")
