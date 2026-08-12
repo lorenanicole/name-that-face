@@ -14,13 +14,14 @@ PAYLOAD = {"name": "Lorena Mesa", "email": "me@lorenamesa.com", "age": 39}
 
 
 def generate_token():
+    expire = datetime.now(timezone.utc) + timedelta(minutes=30)
     return jwt.encode(
         {
             "sub": USER_ID,
             "username": USERNAME,
             "scope": "user:write",
             "step_up": False,
-            "exp": datetime.now(timezone.utc) + timedelta(minutes=30),
+            "exp": int(expire.timestamp()),
         },
         JWT_SECRET,
         algorithm=JWT_ALGORITHM,
