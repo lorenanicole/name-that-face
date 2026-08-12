@@ -32,13 +32,14 @@ USER_ID = "test-user-1"
 
 
 def _jwt(scope: str, step_up: bool = False, exp_delta: timedelta = timedelta(minutes=30)) -> str:
+    expire = datetime.now(timezone.utc) + exp_delta
     return pyjwt.encode(
         {
             "sub": USER_ID,
             "username": "test@example.com",
             "scope": scope,
             "step_up": step_up,
-            "exp": datetime.now(timezone.utc) + exp_delta,
+            "exp": int(expire.timestamp()),
         },
         SECRET,
         algorithm=ALGO,
