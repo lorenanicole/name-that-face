@@ -57,7 +57,7 @@ jobs:
       - name: Build and push API image
         uses: docker/build-push-action@v6
         with:
-          context: .
+          context: name-that-face
           file: name-that-face/Dockerfile
           push: true
           tags: ${{ steps.api-meta.outputs.tags }}
@@ -78,7 +78,7 @@ jobs:
       - name: Build and push client image
         uses: docker/build-push-action@v6
         with:
-          context: .
+          context: name-that-face
           file: name-that-face/Dockerfile.client
           push: true
           tags: ${{ steps.client-meta.outputs.tags }}

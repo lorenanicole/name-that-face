@@ -12,11 +12,11 @@ WORKDIR /app
 RUN pip install --no-cache-dir poetry \
     && poetry config virtualenvs.create false
 
-COPY name-that-face/pyproject.toml name-that-face/poetry.lock ./
+COPY pyproject.toml poetry.lock ./
 # Only needs the main group deps (streamlit, requests, pyjwt)
 RUN poetry install --no-root --without deepface --without dev
 
-COPY name-that-face/src/client.py .
+COPY src/client.py .
 
 # API URL — override at runtime with -e API_BASE_URL=https://your-ngrok-url
 ENV API_BASE_URL=http://api:8000

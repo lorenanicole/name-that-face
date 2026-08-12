@@ -28,7 +28,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Create isolated venv and install all deepface deps from the pinned lockfile
 RUN python -m venv /opt/deepface-venv
-COPY name-that-face/deepface-requirements.txt .
+COPY deepface-requirements.txt .
 RUN /opt/deepface-venv/bin/pip install --upgrade pip \
     && /opt/deepface-venv/bin/pip install --no-cache-dir -r deepface-requirements.txt
 
@@ -55,14 +55,14 @@ RUN pip install --no-cache-dir poetry \
     && poetry config virtualenvs.create false
 
 # Copy dependency manifests first for layer-cache efficiency
-COPY name-that-face/pyproject.toml name-that-face/poetry.lock ./
+COPY pyproject.toml poetry.lock ./
 
 # Install main + dev groups only (deepface group is optional and already in /opt/deepface-venv)
 RUN poetry install --no-root --without deepface
 
 # Copy application source, config, and the auth module from its sibling package
-COPY name-that-face/src/ ./src/
-COPY name-that-face/config/ ./config/
+COPY src/ ./src/
+COPY config/ ./config/
 
 # Audit log directory — mounted as a volume so logs survive container restarts
 RUN mkdir -p /app/logs
