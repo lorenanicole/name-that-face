@@ -10,7 +10,7 @@ from fastapi.security import HTTPBearer  # noqa: E402
 from pydantic import BaseModel  # noqa: E402
 
 from dependencies import duo_auth, fraud_service, settings, token_service  # noqa: E402
-from models import UserRequest  # noqa: E402
+from models import LoginRequest, UserRequest  # noqa: E402
 from rate_limiter import rate_limit  # noqa: E402
 from token_service import TokenError  # noqa: E402
 
@@ -90,11 +90,6 @@ async def update_user(request: Request, user_id: str, body: UserRequest):
         token_expires_at=datetime.fromtimestamp(claims["exp"], tz=timezone.utc).isoformat(),
     )
     return JSONResponse(status_code=200, content=validated)
-
-
-class LoginRequest(BaseModel):
-    challenge: str  # signed challenge token issued by rate_limiter on step-up redirect
-    client_ip: str  # client ip
 
 
 @app.post("/login-2fa")

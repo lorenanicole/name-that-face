@@ -3,6 +3,11 @@ from typing import Optional
 from pydantic import BaseModel, EmailStr, field_validator
 
 
+class LoginRequest(BaseModel):
+    challenge: str  # signed challenge token issued by rate_limiter on step-up redirect
+    client_ip: str  # client ip
+
+
 class UserRequest(BaseModel):
     name: str
     email: Optional[EmailStr] = None
