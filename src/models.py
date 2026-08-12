@@ -7,7 +7,6 @@ from pydantic import BaseModel, EmailStr, Field, field_validator
 
 class LoginRequest(BaseModel):
     challenge: str  # signed challenge token issued by rate_limiter on step-up redirect
-    client_ip: str  # client ip
 
 
 class UserRequest(BaseModel):

@@ -68,20 +68,6 @@ USERNAME = "me@lorenamesa.com"
 PAYLOAD = {"name": "Lorena Mesa", "email": "me@lorenamesa.com", "age": 39}
 
 # Default client IP for local runs (loopback is always safe for Duo ipaddr)
-DEFAULT_CLIENT_IP = "127.0.0.1"
-
-
-def _resolve_public_ip() -> str:
-    """Return the public IP of this machine by querying ipify, falling back to 127.0.0.1."""
-    import requests as _requests
-
-    try:
-        ip = _requests.get("https://api.ipify.org", timeout=3).text.strip()
-        print(f"ℹ️  Resolved public IP: {ip}")
-        return ip
-    except Exception:
-        print("⚠️  Could not resolve public IP — falling back to 127.0.0.1")
-        return DEFAULT_CLIENT_IP
 
 
 # ---------------------------------------------------------------------------
@@ -110,10 +96,10 @@ def generate_token() -> str:
 # ---------------------------------------------------------------------------
 
 
-def step1_get_challenge(client, token: str) -> tuple[str, str]:
+def step1_get_challenge(client, token: str) -> str:
     """POST /api/user/{user_id} and extract the challenge token from the 307 redirect.
 
-    Returns: (challenge_token, bound_client_ip) — the IP that the challenge was bound to.
+    Returns: challenge_token
     """
     print("\n--- Step 1: POST /api/user/{user_id} (step_up=False) ---")
     resp = client.post(
@@ -132,21 +118,13 @@ def step1_get_challenge(client, token: str) -> tuple[str, str]:
     if not challenge:
         sys.exit("❌ Challenge token not found in Location header")
 
-    # Decode challenge to extract the bound client_ip
-    try:
-        challenge_claims = jwt.decode(challenge, JWT_SECRET, algorithms=[JWT_ALGORITHM])
-        bound_client_ip = challenge_claims.get("client_ip")
-        print(f"Challenge token: {challenge[:40]}...")
-        print(f"✓ Challenge bound to client_ip: {bound_client_ip}")
-        return challenge, bound_client_ip
-    except Exception as e:
-        sys.exit(f"❌ Could not decode challenge token: {e}")
+    print(f"Challenge token: {challenge[:40]}...")
+    return challenge
 
 
-def step2_duo_push(client, challenge: str, client_ip: str, mock: bool = False) -> tuple[str, str]:
-    """POST /login-2fa with the challenge token and client_ip."""
+def step2_duo_push(client, challenge: str, mock: bool = False) -> tuple[str, str]:
+    """POST /login-2fa with the challenge token. Server resolves IP from request."""
     print("\n--- Step 2: POST /login-2fa ---")
-    print(f"Sending challenge with client_ip: {client_ip}")
 
     if mock:
         print("⚠️  Mock mode: auto-approving Duo push...")
@@ -156,7 +134,7 @@ def step2_duo_push(client, challenge: str, client_ip: str, mock: bool = False) -
 
     resp = client.post(
         f"{BASE_URL}/login-2fa",
-        json={"challenge": challenge, "client_ip": client_ip},
+        json={"challenge": challenge},
     )
     print(f"Status: {resp.status_code}")
     if resp.status_code != 200:
@@ -295,27 +273,7 @@ def main():
             "No running server or phone needed — ideal for local dev."
         ),
     )
-    parser.add_argument(
-        "--client-ip",
-        default=None,
-        metavar="IP",
-        help="Client IP forwarded to Duo ipaddr (default: auto-resolved public IP of this machine).",
-    )
     args = parser.parse_args()
-
-    # Resolve client IP: explicit flag wins; otherwise decide based on server location.
-    if args.client_ip:
-        pass
-    elif args.mock_duo:
-        pass  # In-process client always resolves to 127.0.0.1
-    elif "localhost" in BASE_URL or "127.0.0.1" in BASE_URL:
-        # Local server: resolve public IP for more realistic Duo testing
-        # (assumes server is running on 0.0.0.0, not just 127.0.0.1)
-        print("ℹ️  Local server detected — resolving your public IP for realistic Duo testing...")
-        _resolve_public_ip()
-    else:
-        # Remote server: use public IP
-        _resolve_public_ip()
 
     print("=== 2FA Step-Up Flow Validation ===")
 
@@ -334,12 +292,8 @@ def main():
         token = generate_token()
         print(f"Generated token: {token[:40]}...")
 
-        challenge, bound_client_ip = step1_get_challenge(client, token)
-        # Use the IP that the challenge was actually bound to
-        print(f"ℹ️  Using bound client_ip for 2FA: {bound_client_ip}")
-        elevated_token, redirect_to = step2_duo_push(
-            client, challenge, client_ip=bound_client_ip, mock=args.mock_duo
-        )
+        challenge = step1_get_challenge(client, token)
+        elevated_token, redirect_to = step2_duo_push(client, challenge, mock=args.mock_duo)
         result = step3_elevated_request(client, elevated_token, redirect_to)
 
         print("\n✅ Full 2FA flow completed successfully!")

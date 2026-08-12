@@ -122,12 +122,4 @@ class TokenService:
             raise TokenError("Invalid challenge token")
         if claims.get("type") != "set_up_challenge":
             raise TokenError("Not a challenge token")
-        return TokenClaims(
-            type=claims.get("type"),
-            sub=claims.get("sub"),
-            username=claims.get("username"),
-            client_ip=claims.get("client_ip"),
-            required_scope=claims.get("required_scope"),
-            next=claims.get("next"),
-            exp=claims.get("exp"),
-        )
+        return TokenClaims.model_validate(claims)
