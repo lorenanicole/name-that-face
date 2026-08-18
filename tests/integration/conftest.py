@@ -13,7 +13,6 @@ Strategy:
 """
 
 import base64
-import sys
 from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 
@@ -41,37 +40,6 @@ def _jwt(scope: str, step_up: bool = False, exp_delta: timedelta = timedelta(min
         SECRET,
         algorithm=ALGO,
     )
-
-
-@pytest.fixture(autouse=True, scope="function")
-def _reset_dependencies(request, monkeypatch):
-    """Reset dependencies singleton before each integration test."""
-    if "integration" in request.node.nodeid:
-        # Set env BEFORE any imports
-        monkeypatch.setenv("SECRET_KEY", SECRET)
-        monkeypatch.setenv("ALGORITHM", ALGO)
-        monkeypatch.setenv("DUO_INTEGRATION_KEY", "test")
-        monkeypatch.setenv("DUO_SECRET_KEY", "test")
-        monkeypatch.setenv("DUO_API_HOST", "api-test.duosecurity.com")
-
-        # Clear modules so they reimport with new env vars
-        modules_to_clear = [
-            k for k in sys.modules.keys() if k in ("app", "dependencies", "settings")
-        ]
-        for mod in modules_to_clear:
-            del sys.modules[mod]
-
-        # Clear the cached singletons
-        import dependencies
-
-        dependencies._singletons = {
-            "settings": None,
-            "token_config": None,
-            "token_service": None,
-            "duo_auth": None,
-            "fraud_service": None,
-        }
-    yield
 
 
 @pytest.fixture(scope="session")
