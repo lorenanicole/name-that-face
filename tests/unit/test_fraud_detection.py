@@ -100,7 +100,8 @@ def _mock_proc(stdout: str, returncode: int = 0):
 @pytest.mark.unit
 def test_verify_match_returns_verified_true(svc):
     with patch("subprocess.run", return_value=_mock_proc(_deepface_result(True, 0.4, 0.68))):
-        result = svc.verify(SELFIE_B64, GOV_ID_B64)
+        with patch("fraud_detection_service.validate_government_id", return_value=(True, "")):
+            result = svc.verify(SELFIE_B64, GOV_ID_B64)
     assert result.verified is True
     assert result.is_deepfake is False
     assert result.distance == pytest.approx(0.4)
@@ -111,7 +112,8 @@ def test_verify_match_returns_verified_true(svc):
 @pytest.mark.unit
 def test_verify_mismatch_returns_verified_false(svc):
     with patch("subprocess.run", return_value=_mock_proc(_deepface_result(False, 0.75, 0.68))):
-        result = svc.verify(SELFIE_B64, GOV_ID_B64)
+        with patch("fraud_detection_service.validate_government_id", return_value=(True, "")):
+            result = svc.verify(SELFIE_B64, GOV_ID_B64)
     assert result.verified is False
     assert result.is_deepfake is True
     assert any("mismatch" in s for s in result.signals)
@@ -120,7 +122,8 @@ def test_verify_mismatch_returns_verified_false(svc):
 @pytest.mark.unit
 def test_verify_hashes_are_sha256_of_b64(svc):
     with patch("subprocess.run", return_value=_mock_proc(_deepface_result(True))):
-        result = svc.verify(SELFIE_B64, GOV_ID_B64)
+        with patch("fraud_detection_service.validate_government_id", return_value=(True, "")):
+            result = svc.verify(SELFIE_B64, GOV_ID_B64)
     assert result.selfie_hash == SELFIE_HASH
     assert result.gov_id_hash == GOV_ID_HASH
 
@@ -130,33 +133,34 @@ def test_verify_confidence_derived_from_distance(svc):
     # confidence = max(0, 1 - distance / (threshold * 2))
     # distance=0.34, threshold=0.68 → 1 - 0.34/1.36 = 0.75
     with patch("subprocess.run", return_value=_mock_proc(_deepface_result(True, 0.34, 0.68))):
-        result = svc.verify(SELFIE_B64, GOV_ID_B64)
+        with patch("fraud_detection_service.validate_government_id", return_value=(True, "")):
+            result = svc.verify(SELFIE_B64, GOV_ID_B64)
     assert result.confidence == pytest.approx(0.75)
 
 
 @pytest.mark.unit
-def test_verify_subprocess_no_output_returns_error_result(svc):
+def test_verify_subprocess_no_output_raises_error(svc):
+    """When subprocess produces no output, verify raises RuntimeError."""
     with patch("subprocess.run", return_value=_mock_proc("")):
-        result = svc.verify(SELFIE_B64, GOV_ID_B64)
-    assert result.verified is False
-    assert result.is_deepfake is True
-    assert result.confidence == 0.0
-    assert any("error" in s.lower() for s in result.signals)
+        with patch("fraud_detection_service.validate_government_id", return_value=(True, "")):
+            with pytest.raises(RuntimeError, match="produced no output"):
+                svc.verify(SELFIE_B64, GOV_ID_B64)
 
 
 @pytest.mark.unit
-def test_verify_subprocess_deepface_error_returns_error_result(svc):
+def test_verify_subprocess_deepface_error_raises(svc):
+    """When DeepFace reports error, verify raises RuntimeError."""
     err_out = json.dumps({"ok": False, "error": "No face detected"})
     with patch("subprocess.run", return_value=_mock_proc(err_out)):
-        result = svc.verify(SELFIE_B64, GOV_ID_B64)
-    assert result.verified is False
-    assert result.confidence == 0.0
+        with patch("fraud_detection_service.validate_government_id", return_value=(True, "")):
+            with pytest.raises(RuntimeError, match="No face detected"):
+                svc.verify(SELFIE_B64, GOV_ID_B64)
 
 
 @pytest.mark.unit
-def test_verify_temp_files_cleaned_up(svc, tmp_path):
-    """Temp files must be deleted even when DeepFace raises."""
+def test_verify_temp_files_cleaned_up_on_error(svc, tmp_path):
+    """Temp files must be deleted even when subprocess raises."""
     with patch("subprocess.run", side_effect=RuntimeError("crash")):
-        result = svc.verify(SELFIE_B64, GOV_ID_B64)
-    # result is the fallback error result — no exception propagated
-    assert result.verified is False
+        with patch("fraud_detection_service.validate_government_id", return_value=(True, "")):
+            with pytest.raises(RuntimeError, match="crash"):
+                svc.verify(SELFIE_B64, GOV_ID_B64)

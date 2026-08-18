@@ -18,8 +18,20 @@ RUN poetry install --no-root --without deepface --without dev
 
 COPY src/client.py .
 
-# API URL — override at runtime with -e API_BASE_URL=https://your-ngrok-url
+# Client configuration — set at runtime via -e or docker-compose
+# Example: docker run -e API_BASE_URL=https://api.example.com \
+#                     -e JWT_SECRET=your-secret \
+#                     -e USER_ID=1 \
+#                     -e USERNAME=user@example.com
+# Defaults for local docker-compose:
 ENV API_BASE_URL=http://api:8000
+ENV JWT_SECRET=test-secret-change-me
+ENV USER_ID=test-user-1
+ENV USERNAME=test@example.com
+ENV USER_NAME=Test User
+ENV USER_EMAIL=test@example.com
+ENV USER_AGE=25
+ENV CLIENT_LOG_PATH=/tmp/name_that_face_client.log
 
 EXPOSE 8501
 

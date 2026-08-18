@@ -12,6 +12,7 @@ Deepfake detection as a service. Upload a selfie and a government ID photo — [
 |------|---------|-------|
 | Python | 3.12 | Main app and deepface venv |
 | Poetry | ≥ 2.0 | Dependency management |
+| Tesseract OCR | ≥ 5 | Document validation (system-level dependency) |
 | Docker + Docker Compose | ≥ 27 | Containerised deployment |
 | ngrok | ≥ 3 | Expose local ports over HTTPS |
 | Duo account | any | Free trial works; needs Auth API application |
@@ -26,6 +27,7 @@ name-that-face/
 │   ├── app.py                      # FastAPI routes + Swagger config
 │   ├── client.py                   # Streamlit front-end
 │   ├── dependencies.py             # Singleton wiring (settings, duo, services)
+│   ├── document_validator.py       # OCR validation of government ID documents
 │   ├── fraud_detection_service.py  # DeepFace wrapper (subprocess)
 │   ├── logging_config.py           # structlog (pretty dev / JSON prod)
 │   ├── models.py                   # Pydantic request/response models
@@ -53,7 +55,8 @@ name-that-face/
 ├── deepface-requirements.txt       # Pinned deps for the isolated deepface venv
 ├── Dockerfile / Dockerfile.client  # Multi-stage API + Streamlit containers
 ├── docker-compose.yml              # Wires api + client services
-├── .env.example                    # Safe template — copy to .env
+├── .env.example                    # Safe template for server — copy to .env
+├── .env.client.example             # Safe template for client — copy to .env.client
 └── logs/audit_log.jsonl            # Append-only audit log (auto-created)
 ```
 
@@ -61,21 +64,46 @@ name-that-face/
 
 ## Local development setup
 
-### 1. Configure environment
+### 1. Install Tesseract OCR (system dependency)
 
+**macOS:**
+```bash
+brew install tesseract
+```
+
+**Ubuntu/Debian:**
+```bash
+apt-get update && apt-get install -y tesseract-ocr
+```
+
+**Windows:**
+Download installer from https://github.com/UB-Mannheim/tesseract/wiki
+
+Verify: `tesseract --version`
+
+### 2. Configure environment
+
+**Server (.env):**
 ```bash
 cp .env.example .env
 # Fill in: DUO_INTEGRATION_KEY, DUO_SECRET_KEY, DUO_API_HOST, SECRET_KEY
 ```
 
-### 2. Install dependencies
+**Client (.env.client):**
+```bash
+cp .env.client.example .env.client
+# Fill in: API_BASE_URL (default: http://127.0.0.1:8000)
+# Other defaults work for local testing
+```
+
+### 3. Install Python dependencies
 
 ```bash
 poetry install
 poetry run python --version   # Python 3.12.x
 ```
 
-### 3. Set up the DeepFace venv (one-time, ~5 min)
+### 4. Set up the DeepFace venv (one-time, ~5 min)
 
 DeepFace + TensorFlow run in a **separate** Python 3.12 venv — TensorFlow is incompatible with Python 3.13 and too heavy to run in the main process.
 
@@ -92,7 +120,7 @@ deactivate
 
 > **First request:** ArcFace model weights (~600 MB) download to `~/.deepface/weights/` on first use.
 
-### 4. Install pre-commit hooks
+### 5. Install pre-commit hooks
 
 ```bash
 poetry run python -m pre_commit install --hook-type pre-commit --hook-type pre-push
@@ -142,11 +170,13 @@ Every call prints a summary table, the raw JWT, and a ready-to-paste `curl` exam
 
 | Command | What it does |
 |---------|-------------|
-| `poetry run inv test` | All 67 tests |
-| `poetry run inv test --unit` | 49 unit tests (~0.7s, no I/O) |
-| `poetry run inv test --integration` | 18 integration tests (full FastAPI) |
+| `poetry run inv test` | All tests (run separately: unit then integration) |
+| `poetry run inv test --unit` | 64 unit tests (~0.7s, no I/O) |
+| `poetry run inv test --integration` | 16 integration tests + 2 skipped (full FastAPI) |
 | `poetry run inv test --coverage` | All tests + HTML report in `htmlcov/` |
 | `poetry run inv test --verbose` | Any of the above with `-v` |
+
+> **Note:** Unit and integration tests should be run separately due to pytest singleton isolation. CI runs them with `--unit` and `--integration` flags.
 
 ### Linting & formatting
 
@@ -235,6 +265,19 @@ docker compose logs -f api   # tail JSON logs
 | `LOG_FORMAT` | | `pretty` / `json` in Docker | `pretty` or `json` |
 | `LOG_LEVEL` | | `INFO` | `DEBUG`, `INFO`, `WARNING`, `ERROR` |
 | `API_BASE_URL` | | `http://api:8000` | URL the Streamlit client calls |
+
+**Client configuration (Streamlit):**
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `API_BASE_URL` | `http://api:8000` | Backend API URL |
+| `JWT_SECRET` | `test-secret-change-me` | Must match server `SECRET_KEY` |
+| `USER_ID` | `test-user-1` | Test user ID |
+| `USERNAME` | `test@example.com` | Test username for JWT |
+| `USER_NAME` | `Test User` | Display name in payload |
+| `USER_EMAIL` | `test@example.com` | Email in payload |
+| `USER_AGE` | `25` | Age in payload |
+| `CLIENT_LOG_PATH` | `/tmp/name_that_face_client.log` | Client logging file |
 
 ---
 

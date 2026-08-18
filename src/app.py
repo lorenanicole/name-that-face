@@ -141,10 +141,10 @@ async def upload_photo(
     selfie_bytes = await selfie.read()
     gov_id_bytes = await gov_id.read()
 
-    if len(selfie_bytes) > 10 * 1024 * 1024:
-        raise HTTPException(status_code=413, detail="Selfie exceeds 10MB limit")
-    if len(gov_id_bytes) > 10 * 1024 * 1024:
-        raise HTTPException(status_code=413, detail="Government ID photo exceeds 10MB limit")
+    if len(selfie_bytes) > 50 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="Selfie exceeds 50MB limit")
+    if len(gov_id_bytes) > 50 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="Government ID photo exceeds 50MB limit")
 
     selfie_b64 = base64.b64encode(selfie_bytes).decode("utf-8")
     gov_id_b64 = base64.b64encode(gov_id_bytes).decode("utf-8")

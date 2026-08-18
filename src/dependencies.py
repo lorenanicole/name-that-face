@@ -15,22 +15,34 @@ from fraud_detection_service import FraudDetectionService  # noqa: E402
 from settings import Settings, TokenConfig  # noqa: E402
 from token_service import TokenService  # noqa: E402
 
-# 1. App settings (env vars / .env) — must come first so AUDIT_LOG_PATH is available
-settings = Settings()
+# Lazy-load singletons to support test isolation
+_singletons = {
+    "settings": None,
+    "token_config": None,
+    "token_service": None,
+    "duo_auth": None,
+    "fraud_service": None,
+}
 
-# 2. Configure structlog/stdlib logging now that we have the path from settings
-logging_config.configure(audit_log_path=settings.AUDIT_LOG_PATH)
 
-# 3. Token config (parsed from config.yml)
-token_config = TokenConfig(settings.TOKEN_CONFIG_PATH)
+def _init_singletons():
+    """Initialize all singletons (lazy-loaded for test isolation)."""
+    if _singletons["settings"] is None:
+        _singletons["settings"] = Settings()
+        logging_config.configure(audit_log_path=_singletons["settings"].AUDIT_LOG_PATH)
+        _singletons["token_config"] = TokenConfig(_singletons["settings"].TOKEN_CONFIG_PATH)
+        _singletons["token_service"] = TokenService(_singletons["token_config"])
+        _singletons["duo_auth"] = duo_client.Auth(
+            ikey=_singletons["settings"].DUO_INTEGRATION_KEY,
+            skey=_singletons["settings"].DUO_SECRET_KEY,
+            host=_singletons["settings"].DUO_API_HOST,
+        )
+        _singletons["fraud_service"] = FraudDetectionService()
 
-# 4. Token service (depends on token_config)
-token_service = TokenService(token_config)
 
-# 5. Duo Auth
-duo_auth = duo_client.Auth(
-    ikey=settings.DUO_INTEGRATION_KEY, skey=settings.DUO_SECRET_KEY, host=settings.DUO_API_HOST
-)
-
-# 6. Fraud detection service
-fraud_service = FraudDetectionService()
+def __getattr__(name):
+    """Lazy-load singletons on first access."""
+    if name in _singletons:
+        _init_singletons()
+        return _singletons[name]
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

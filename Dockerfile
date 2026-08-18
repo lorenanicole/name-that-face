@@ -38,11 +38,13 @@ RUN /opt/deepface-venv/bin/pip install --upgrade pip \
 FROM python:3.12-slim AS api
 
 # Same runtime system libs (OpenCV needs libgl1 at runtime too)
+# Also include tesseract-ocr for government ID document validation
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libgl1 \
     libglib2.0-0 \
     libgomp1 \
     curl \
+    tesseract-ocr \
     && rm -rf /var/lib/apt/lists/*
 
 # Bring in the pre-built deepface venv from stage 1

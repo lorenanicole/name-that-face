@@ -16,8 +16,8 @@
 services:
   api:
     build:
-      context: ..
-      dockerfile: name-that-face/Dockerfile
+      context: .
+      dockerfile: Dockerfile
     image: name-that-face-api
     ports:
       - "8000:8000"
@@ -43,14 +43,22 @@ services:
 
   client:
     build:
-      context: ..
-      dockerfile: name-that-face/Dockerfile.client
+      context: .
+      dockerfile: Dockerfile.client
     image: name-that-face-client
     ports:
       - "8501:8501"
     environment:
       # Points the Streamlit app at the API container by service name
       API_BASE_URL: http://api:8000
+      # Client configuration (test defaults; override as needed)
+      JWT_SECRET: test-secret-change-me
+      USER_ID: test-user-1
+      USERNAME: test@example.com
+      USER_NAME: Test User
+      USER_EMAIL: test@example.com
+      USER_AGE: "25"
+      CLIENT_LOG_PATH: /tmp/name_that_face_client.log
     depends_on:
       api:
         condition: service_healthy

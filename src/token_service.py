@@ -33,6 +33,7 @@ class TokenService:
         """
         try:
             claims = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+
         except jwt.ExpiredSignatureError:
             raise TokenError("Token expired")
         except jwt.InvalidTokenError:

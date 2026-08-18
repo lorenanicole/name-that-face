@@ -7,6 +7,8 @@ from datetime import datetime, timezone
 
 import structlog
 
+from document_validator import validate_government_id
+
 logger = structlog.get_logger(__name__)
 
 
@@ -65,6 +67,12 @@ class FraudDetectionService:
         selfie_bytes = base64.b64decode(selfie_b64)
         gov_id_bytes = base64.b64decode(gov_id_b64)
 
+        # Validate that the government ID image is a valid government document
+        is_valid_doc, doc_message = validate_government_id(gov_id_bytes)
+        if not is_valid_doc:
+            logger.warning("fraud_detection.invalid_document", reason=doc_message)
+            raise ValueError(f"Invalid government ID document: {doc_message}")
+
         with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as sf:
             sf.write(selfie_bytes)
             selfie_path = sf.name
@@ -77,17 +85,24 @@ class FraudDetectionService:
 import json, sys
 try:
     from deepface import DeepFace
-    r = DeepFace.verify(
-        img1_path={selfie_path!r},
-        img2_path={gov_id_path!r},
-        model_name={model_name!r},
-        detector_backend={detector_backend!r},
-        distance_metric="cosine",
-        enforce_detection=True,
-    )
+    try:
+        r = DeepFace.verify(
+            img1_path={selfie_path!r},
+            img2_path={gov_id_path!r},
+            model_name={model_name!r},
+            detector_backend={detector_backend!r},
+            distance_metric="cosine",
+            enforce_detection=True,
+        )
+    except Exception as enforce_err:
+        # If face detection fails, try without strict enforcement
+        if "enforce_detection" in str(enforce_err) or "Exception while processing" in str(enforce_err):
+            print(json.dumps({{"ok": False, "error": "Face not detected in image. Please ensure both photos contain clear, front-facing faces."}}), file=sys.stderr)
+            sys.exit(1)
+        raise
     print(json.dumps({{"ok": True, "verified": r["verified"], "distance": r["distance"], "threshold": r["threshold"]}}))
 except Exception as e:
-    print(json.dumps({{"ok": False, "error": str(e)}}))
+    print(json.dumps({{"ok": False, "error": f"DeepFace verification failed: {{str(e)}}"}}))
 """
 
         try:
@@ -106,7 +121,15 @@ except Exception as e:
             data = json.loads(output_lines[-1])
 
             if not data.get("ok"):
-                raise RuntimeError(data.get("error", "Unknown DeepFace error"))
+                error_msg = data.get("error", "Unknown verification error")
+
+                # Surface intelligible errors to the user
+                if "Face not detected" in error_msg or "Exception while processing" in error_msg:
+                    raise RuntimeError(
+                        "Unable to detect a face in one or both photos. "
+                        "Please upload clear photos with your face clearly visible and looking at the camera."
+                    )
+                raise RuntimeError(error_msg)
 
             verified = data["verified"]
             distance = data["distance"]
@@ -135,16 +158,8 @@ except Exception as e:
             )
         except Exception as e:
             logger.error("fraud_detection.deepface_failed", error=str(e))
-            return FraudDetectionResult(
-                verified=False,
-                is_deepfake=True,
-                confidence=0.0,
-                distance=1.0,
-                threshold=0.0,
-                signals=[f"Detection error: {str(e)}"],
-                selfie_hash=selfie_hash,
-                gov_id_hash=gov_id_hash,
-            )
-        finally:
+            # Clean up temp files before raising
             os.unlink(selfie_path)
             os.unlink(gov_id_path)
+            # Re-raise so the API can return a proper error response
+            raise
