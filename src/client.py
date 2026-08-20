@@ -11,7 +11,7 @@ import streamlit as st
 from browser_detection import browser_detection_engine
 from dotenv import load_dotenv
 
-from sensor_bridge import motion_sensor_bridge
+from webrtc_liveness import webrtc_liveness_detector
 
 logger = logging.getLogger(__name__)
 
@@ -275,48 +275,86 @@ elif st.session_state.step == "capture_photo":
         # LIVENESS NOT PASSED - Show detection UI
         if st.session_state.device_info.get("is_mobile"):
             st.info(
-                "📱 Dual Liveness Check: Combine sensor data (gyro/accel) with OpenCV video analysis. "
-                "Click the button and move your head naturally for 5 seconds to prove you're real."
+                "📱 WebRTC Liveness Detection: Real-time video capture with OpenCV analysis. "
+                "Allow camera access and move your head naturally for 5 seconds."
             )
 
-            motion_sensor_bridge(
-                duration_seconds=5,
-                auth_token=st.session_state.elevated_token,
-                user_id=USER_ID,
-                api_url=BASE_URL,
-            )
+            with st.spinner("🎬 Initializing WebRTC camera..."):
+                frames = webrtc_liveness_detector(duration_seconds=5)
 
-            st.write(
-                "Once you see **✅ Dual Liveness Verified!** (both sensor + video must pass), click below:"
-            )
-            if st.button("✅ Confirm Liveness & Continue", type="primary", key="confirm_liveness"):
-                with st.spinner("Verifying liveness with server-side OpenCV analysis..."):
-                    try:
-                        # First, try to get frames from sessionStorage via JavaScript
-                        # For now, we'll call analyze with empty frames, but they may have been uploaded
+            if frames and len(frames) > 0:
+                st.success(f"✅ Captured {len(frames)} video frames via WebRTC")
 
-                        endpoint = f"{BASE_URL}/api/liveness/analyze"
-                        headers = build_headers(st.session_state.elevated_token)
+                if st.button("✅ Analyze with OpenCV", type="primary", key="confirm_liveness"):
+                    with st.spinner("Sending frames to server for OpenCV analysis..."):
+                        try:
+                            # Convert frames to base64 for transmission
+                            import base64
 
-                        logger.info(f"Calling OpenCV liveness endpoint: {endpoint}")
+                            import cv2
 
-                        resp = requests.post(
-                            endpoint, json={"frames_base64": []}, headers=headers, timeout=5
-                        )
+                            frames_b64 = []
+                            for frame in frames[:50]:  # Limit to 50 frames
+                                _, buffer = cv2.imencode(".jpg", frame)
+                                frame_b64 = base64.b64encode(buffer).decode()
+                                frames_b64.append(frame_b64)
 
-                        if resp.status_code == 200:
-                            opencv_result = resp.json()
-                            logger.info(f"OpenCV result: {opencv_result}")
-                    except Exception as e:
-                        logger.error(f"OpenCV error: {e}")
+                            endpoint = f"{BASE_URL}/api/liveness/analyze"
+                            headers = build_headers(st.session_state.elevated_token)
 
-                st.session_state.liveness_passed = True
-                st.session_state.liveness_score = {
-                    "confidence": 0.90,
-                    "is_live": True,
-                    "detection_type": "dual_sensor_video",
-                }
-                st.rerun()
+                            logger.info(
+                                f"Sending {len(frames_b64)} frames to OpenCV analysis: {endpoint}"
+                            )
+
+                            resp = requests.post(
+                                endpoint,
+                                json={"frames_base64": frames_b64},
+                                headers=headers,
+                                timeout=30,
+                            )
+
+                            if resp.status_code == 200:
+                                opencv_result = resp.json()
+                                logger.info(
+                                    f"OpenCV analysis result - is_live={opencv_result.get('is_live')}, "
+                                    f"confidence={opencv_result.get('confidence')}, "
+                                    f"frames={opencv_result.get('frame_count')}, "
+                                    f"signals={opencv_result.get('signals')}"
+                                )
+
+                                confidence = opencv_result.get("confidence", 0.0)
+                                is_live = opencv_result.get("is_live", False)
+                                frame_count = opencv_result.get("frame_count", 0)
+                                signals = opencv_result.get("signals", [])
+
+                                if frame_count > 0 and is_live and confidence >= 0.6:
+                                    st.success(
+                                        f"✅ Liveness Verified! OpenCV confidence: {confidence:.0%}"
+                                    )
+                                    st.session_state.liveness_passed = True
+                                    st.session_state.liveness_score = {
+                                        "confidence": confidence,
+                                        "is_live": True,
+                                        "detection_type": "webrtc_opencv",
+                                        "frame_count": frame_count,
+                                        "signals": signals,
+                                    }
+                                    st.rerun()
+                                else:
+                                    st.warning(
+                                        f"⚠️ Low confidence ({confidence:.0%}). Try again with better lighting and movement."
+                                    )
+                            else:
+                                st.error(f"Server error: {resp.status_code}")
+                                logger.error(f"OpenCV error response: {resp.text}")
+
+                        except Exception as e:
+                            st.error(f"Analysis error: {e}")
+                            logger.error(f"OpenCV exception: {e}", exc_info=True)
+            else:
+                st.warning(
+                    "⏳ No frames captured. Make sure camera is enabled and you have sufficient lighting."
+                )
         else:
             st.warning(
                 "📱 Dual liveness (sensor + video) requires mobile device. Desktop: motion check skipped."

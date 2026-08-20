@@ -5,6 +5,7 @@ from typing import Optional
 
 import structlog
 from fastapi import Depends, FastAPI, File, HTTPException, Request, UploadFile  # noqa: E402
+from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
 from fastapi.responses import JSONResponse  # noqa: E402
 from fastapi.security import HTTPBearer  # noqa: E402
 from pydantic import BaseModel  # noqa: E402
@@ -46,6 +47,15 @@ inv token --scope admin:admin --step-up
 - Daily token budget refills every 24 hours (budget control)
 """,
     version="1.0.0",
+)
+
+# Enable CORS for liveness detection iframe (Streamlit components)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Allow all origins for local development
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 
@@ -222,16 +232,35 @@ async def upload_liveness_frames(request: Request, body: VideoFramesUploadReques
     Frames are stored temporarily and used by /api/liveness/analyze.
     """
     frame_count = len(body.frames_base64) if body.frames_base64 else 0
-    logger.info("liveness.frames_uploaded", frame_count=frame_count, user_id=body.user_id)
+    user_id = body.user_id or request.state.jwt_claims.get("sub", "unknown")
+
+    # Validate frame data
+    avg_frame_size = 0
+    if frame_count > 0:
+        avg_frame_size = sum(len(f) for f in body.frames_base64) / frame_count
+
+    logger.info(
+        "liveness.frames_uploaded",
+        frame_count=frame_count,
+        user_id=user_id,
+        avg_frame_size_bytes=int(avg_frame_size),
+    )
 
     # Store frames in app state (temporary cache, expires after use)
     if not hasattr(app, "_liveness_frames_cache"):
         app._liveness_frames_cache = {}
 
-    app._liveness_frames_cache[body.user_id] = {
+    app._liveness_frames_cache[user_id] = {
         "frames": body.frames_base64,
         "timestamp": datetime.now(timezone.utc),
     }
+
+    logger.info(
+        "liveness.frames_cached",
+        frame_count=frame_count,
+        user_id=user_id,
+        cache_size=len(app._liveness_frames_cache),
+    )
 
     return JSONResponse(
         status_code=200,
@@ -262,19 +291,38 @@ async def analyze_video_liveness(request: Request, body: VideoLivenessRequest):
 
     frame_count = len(body.frames_base64) if body.frames_base64 else 0
     frames_to_analyze = body.frames_base64 or []
+    user_id = request.state.jwt_claims.get("sub", "unknown")
+    cache_hit = False
 
-    # Check if frames were uploaded separately
-    user_id = request.state.jwt_claims.get("sub")
+    # Check if frames were uploaded separately via /api/liveness/frames
     if not frames_to_analyze and hasattr(app, "_liveness_frames_cache"):
-        cached = app._liveness_frames_cache.get(user_id)
-        if cached:
+        if user_id in app._liveness_frames_cache:
+            cached = app._liveness_frames_cache[user_id]
             frames_to_analyze = cached.get("frames", [])
             frame_count = len(frames_to_analyze)
-            logger.info("liveness.opencv_using_cached_frames", frame_count=frame_count)
-            # Clear cache after use
+            cache_hit = True
+            logger.info(
+                "liveness.opencv_using_cached_frames",
+                frame_count=frame_count,
+                user_id=user_id,
+            )
+            # Clear cache after retrieval
             del app._liveness_frames_cache[user_id]
+        else:
+            logger.warning(
+                "liveness.no_cached_frames",
+                user_id=user_id,
+                available_users=list(app._liveness_frames_cache.keys())
+                if hasattr(app, "_liveness_frames_cache")
+                else [],
+            )
 
-    logger.info("liveness.opencv_request_received", frame_count=frame_count)
+    logger.info(
+        "liveness.opencv_request_received",
+        frame_count=frame_count,
+        user_id=user_id,
+        cache_hit=cache_hit,
+    )
 
     if not frames_to_analyze or len(frames_to_analyze) < 3:
         return JSONResponse(
@@ -320,9 +368,14 @@ async def analyze_video_liveness(request: Request, body: VideoLivenessRequest):
         result = opencv_analyze(frames)
 
         logger.info(
-            f"liveness.opencv_analyzed: is_live={result['is_live']}, "
-            f"confidence={result['confidence']:.2f}, frames={result['frame_count']}, "
-            f"signals={result['signals']}"
+            "liveness.opencv_analyzed",
+            user_id=user_id,
+            is_live=result["is_live"],
+            confidence=f"{result['confidence']:.2f}",
+            frame_count=result["frame_count"],
+            signals=result["signals"],
+            avg_sharpness=f"{result.get('avg_sharpness', 0):.1f}",
+            avg_motion=f"{result.get('avg_motion', 0):.3f}",
         )
 
         return JSONResponse(
@@ -339,7 +392,7 @@ async def analyze_video_liveness(request: Request, body: VideoLivenessRequest):
         )
 
     except Exception as e:
-        logger.error(f"liveness.opencv_error: {e}")
+        logger.error("liveness.opencv_error", user_id=user_id, error=str(e), exc_info=True)
         return JSONResponse(
             status_code=500,
             content={
