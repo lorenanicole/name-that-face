@@ -201,6 +201,155 @@ class FraudDetectRequest(BaseModel):
     base64_blob: Optional[str] = None
 
 
+class VideoLivenessRequest(BaseModel):
+    """Video frames (base64 encoded) for liveness detection analysis."""
+
+    frames_base64: list[str]  # List of base64-encoded JPEG frames
+
+
+class VideoFramesUploadRequest(BaseModel):
+    """Store video frames for later analysis."""
+
+    frames_base64: list[str]
+    user_id: str
+
+
+@app.post("/api/liveness/frames", dependencies=[Depends(bearer)])
+@rate_limit(key="user:write")
+async def upload_liveness_frames(request: Request, body: VideoFramesUploadRequest):
+    """
+    Upload video frames captured during motion detection for later analysis.
+    Frames are stored temporarily and used by /api/liveness/analyze.
+    """
+    frame_count = len(body.frames_base64) if body.frames_base64 else 0
+    logger.info("liveness.frames_uploaded", frame_count=frame_count, user_id=body.user_id)
+
+    # Store frames in app state (temporary cache, expires after use)
+    if not hasattr(app, "_liveness_frames_cache"):
+        app._liveness_frames_cache = {}
+
+    app._liveness_frames_cache[body.user_id] = {
+        "frames": body.frames_base64,
+        "timestamp": datetime.now(timezone.utc),
+    }
+
+    return JSONResponse(
+        status_code=200,
+        content={
+            "status": "frames_stored",
+            "frame_count": frame_count,
+        },
+    )
+
+
+@app.post("/api/liveness/analyze", dependencies=[Depends(bearer)])
+@rate_limit(key="user:write")
+async def analyze_video_liveness(request: Request, body: VideoLivenessRequest):
+    """
+    Analyze video frames for liveness detection using OpenCV.
+
+    Input: List of base64-encoded video frames captured during motion detection.
+    Output: Liveness score, confidence, detected signals (face detection, motion, etc).
+
+    Combines with client-side JavaScript analysis for hybrid approach:
+    - Client: Quick heuristic check (frame diversity, duration)
+    - Server: Deep analysis (face detection, optical flow, sharpness variance)
+    """
+    import cv2
+    import numpy as np
+
+    from liveness_detector import analyze_video_liveness as opencv_analyze
+
+    frame_count = len(body.frames_base64) if body.frames_base64 else 0
+    frames_to_analyze = body.frames_base64 or []
+
+    # Check if frames were uploaded separately
+    user_id = request.state.jwt_claims.get("sub")
+    if not frames_to_analyze and hasattr(app, "_liveness_frames_cache"):
+        cached = app._liveness_frames_cache.get(user_id)
+        if cached:
+            frames_to_analyze = cached.get("frames", [])
+            frame_count = len(frames_to_analyze)
+            logger.info("liveness.opencv_using_cached_frames", frame_count=frame_count)
+            # Clear cache after use
+            del app._liveness_frames_cache[user_id]
+
+    logger.info("liveness.opencv_request_received", frame_count=frame_count)
+
+    if not frames_to_analyze or len(frames_to_analyze) < 3:
+        return JSONResponse(
+            status_code=200,
+            content={
+                "is_live": False,
+                "confidence": 0.0,
+                "signals": ["Insufficient frames for server-side analysis"],
+                "frame_count": len(body.frames_base64) if body.frames_base64 else 0,
+                "analysis_type": "opencv_full",
+            },
+        )
+
+    try:
+        # Decode base64 frames to OpenCV format
+        frames = []
+        for frame_b64 in frames_to_analyze[:50]:  # Limit to 50 frames to avoid overload
+            try:
+                frame_bytes = base64.b64decode(
+                    frame_b64.split(",")[1] if "," in frame_b64 else frame_b64
+                )
+                nparr = np.frombuffer(frame_bytes, np.uint8)
+                frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+                if frame is not None:
+                    frames.append(frame)
+            except Exception as e:
+                logger.warning(f"Failed to decode frame: {e}")
+                continue
+
+        if len(frames) < 3:
+            return JSONResponse(
+                status_code=200,
+                content={
+                    "is_live": False,
+                    "confidence": 0.0,
+                    "signals": ["Could not decode frames"],
+                    "frame_count": 0,
+                    "analysis_type": "opencv_full",
+                },
+            )
+
+        # Run OpenCV liveness analysis
+        result = opencv_analyze(frames)
+
+        logger.info(
+            f"liveness.opencv_analyzed: is_live={result['is_live']}, "
+            f"confidence={result['confidence']:.2f}, frames={result['frame_count']}, "
+            f"signals={result['signals']}"
+        )
+
+        return JSONResponse(
+            status_code=200,
+            content={
+                "is_live": result["is_live"],
+                "confidence": result["confidence"],
+                "signals": result["signals"],
+                "frame_count": result["frame_count"],
+                "avg_sharpness": result.get("avg_sharpness", 0),
+                "avg_motion": result.get("avg_motion", 0),
+                "analysis_type": "opencv_full",
+            },
+        )
+
+    except Exception as e:
+        logger.error(f"liveness.opencv_error: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={
+                "detail": f"OpenCV analysis failed: {str(e)}",
+                "is_live": False,
+                "confidence": 0.0,
+            },
+        )
+
+
 @app.post("/api/fraud/detect", dependencies=[Depends(bearer)])
 @rate_limit(key="admin:admin")
 async def detect_fraud(request: Request, body: FraudDetectRequest):

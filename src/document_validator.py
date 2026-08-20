@@ -2,6 +2,8 @@
 
 import re
 
+import cv2
+import numpy as np
 import pytesseract
 from PIL import Image
 
@@ -126,27 +128,57 @@ def validate_government_id(image_bytes: bytes) -> tuple[bool, str]:
         if image.size[0] < 100 or image.size[1] < 100:
             return False, "Image is too small. Please upload a clear, full-sized document photo."
 
-        # Try OCR for additional validation, but don't fail if it doesn't work
+        # Check if image contains a detectable face (required for ID)
         try:
-            text = pytesseract.image_to_string(image).lower()
-            if text.strip():
-                # If we got text, do some basic checks
-                has_id_keyword = any(keyword in text for keyword in GOVERNMENT_ID_KEYWORDS)
-                date_pattern = r"\b(\d{1,2})[/-](\d{1,2})[/-](\d{4})\b"
-                dates_found = re.findall(date_pattern, text)
+            # Convert PIL image to OpenCV format
+            cv_image = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
 
-                # Accept if we found keywords or dates
-                if has_id_keyword or dates_found:
-                    return True, "Government ID validated successfully."
-                # If we got text but no keywords, still accept it (image is readable)
-                return True, "Government ID validated successfully."
+            # Use Haar cascade to detect faces
+            cascade_path = cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
+            face_cascade = cv2.CascadeClassifier(cascade_path)
+            gray = cv2.cvtColor(cv_image, cv2.COLOR_BGR2GRAY)
+            faces = face_cascade.detectMultiScale(
+                gray, scaleFactor=1.1, minNeighbors=5, minSize=(30, 30)
+            )
+
+            if len(faces) == 0:
+                return (
+                    False,
+                    "No face detected in image. Government ID must show a clear photo of a person's face.",
+                )
         except Exception:
-            # OCR failed, but that's OK - image is readable
+            # Face detection failed, continue with text validation
             pass
 
-        # If we got here, image is valid but OCR didn't work
-        # Still accept it since the image was readable and reasonable size
-        return True, "Government ID validated successfully."
+        # Perform OCR validation - REQUIRED for government IDs
+        try:
+            text = pytesseract.image_to_string(image).lower()
+            if not text.strip():
+                return (
+                    False,
+                    "No readable text found in document. Please ensure the ID is clear and legible.",
+                )
+
+            # Check for government ID keywords
+            has_id_keyword = any(keyword in text for keyword in GOVERNMENT_ID_KEYWORDS)
+            if not has_id_keyword:
+                return (
+                    False,
+                    "Document does not appear to be a government-issued ID. Please upload a passport, driver's license, or state ID.",
+                )
+
+            # Check for date (expiration or issue date)
+            date_pattern = r"\b(\d{1,2})[/-](\d{1,2})[/-](\d{4})\b"
+            dates_found = re.findall(date_pattern, text)
+            if not dates_found:
+                return (
+                    False,
+                    "No date found on document. Please ensure the ID contains a visible expiration or issue date.",
+                )
+
+            return True, "Government ID validated successfully."
+        except Exception as e:
+            return False, f"Could not read document text. Error: {str(e)}"
 
     except Exception as e:
         return False, f"Error processing document image: {str(e)}"

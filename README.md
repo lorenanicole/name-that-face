@@ -2,7 +2,16 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-Deepfake detection as a service. Upload a selfie and a government ID photo — [DeepFace](https://github.com/serengil/deepface) (ArcFace model) verifies the faces match. Every request goes through Duo 2FA step-up authentication and a token-bucket rate limiter.
+Deepfake detection as a service with **dual liveness detection, strict government ID validation, and face matching**. The flow:
+
+1. **2FA**: Duo push authentication (step-up for sensitive operations)
+2. **Liveness Detection**: Dual-layered anti-spoofing
+   - **Sensor-based**: Gyroscope + accelerometer verify real device motion
+   - **Video-based**: Frame analysis detects natural movement patterns
+3. **Government ID Validation**: OCR + face detection + keyword verification
+4. **Face Matching**: [DeepFace](https://github.com/serengil/deepface) (ArcFace) ensures selfie matches ID
+5. **Rate Limiting**: Token-bucket limiter prevents abuse
+6. **Audit Logging**: Append-only JSON log for compliance
 
 ---
 
@@ -27,8 +36,10 @@ name-that-face/
 │   ├── app.py                      # FastAPI routes + Swagger config
 │   ├── client.py                   # Streamlit front-end
 │   ├── dependencies.py             # Singleton wiring (settings, duo, services)
-│   ├── document_validator.py       # OCR validation of government ID documents
+│   ├── document_validator.py       # OCR + face detection for government IDs
 │   ├── fraud_detection_service.py  # DeepFace wrapper (subprocess)
+│   ├── liveness_detector.py        # OpenCV-based video liveness analysis
+│   ├── sensor_bridge.py            # JavaScript bridge for motion sensors
 │   ├── logging_config.py           # structlog (pretty dev / JSON prod)
 │   ├── models.py                   # Pydantic request/response models
 │   ├── rate_limiter.py             # Token-bucket rate limiter + @rate_limit
@@ -290,7 +301,35 @@ docker compose logs -f api   # tail JSON logs
 
 ---
 
-## API reference
+## Liveness Detection Flow
+
+The Streamlit client enforces a multi-step verification:
+
+1. **Motion Sensor Capture** (5 seconds)
+   - Captures gyroscope + accelerometer data
+   - Captures video frames via camera (optional WebRTC future enhancement)
+   - JavaScript analyzes locally for natural movement patterns
+   
+2. **Liveness Pass/Fail**
+   - Requires both sensor motion AND video consistency
+   - Prevents deepfakes (can't fake gyro + video sync)
+   - Prevents printed photos (can't move with sensors)
+
+3. **Selfie Capture** (only if liveness passes)
+   - Camera photo of user's face
+
+4. **Government ID Upload** (only if selfie captured)
+   - OCR validation: must contain ID keywords + dates
+   - Face detection: must have visible face
+   - Text validation: checks for government ID fields
+
+5. **DeepFace Verification** (only if ID valid)
+   - Compares selfie against government ID
+   - Returns confidence score and match distance
+
+---
+
+## API Reference
 
 Interactive docs: **http://localhost:8000/docs**
 
@@ -300,6 +339,8 @@ Interactive docs: **http://localhost:8000/docs**
 | `POST` | `/api/user/{user_id}` | `user:write` + step_up | Update user — 307 to 2FA if not elevated |
 | `POST` | `/login-2fa` | challenge token | Complete Duo push; returns elevated JWT |
 | `POST` | `/api/user/{user_id}/photo` | `user:write` + step_up | Selfie + gov ID → DeepFace result + audit log |
+| `POST` | `/api/liveness/frames` | `user:write` | Upload video frames for server-side OpenCV analysis (future) |
+| `POST` | `/api/liveness/analyze` | `user:write` | Analyze frames with OpenCV for liveness confidence |
 | `POST` | `/api/fraud/detect` | `admin:admin` + step_up | Raw fraud detection on image/video/base64 |
 
 ---

@@ -11,6 +11,9 @@ Usage:
     inv ngrok                  # tunnel Streamlit client (:8501) via ngrok
     inv ngrok --port 8000      # tunnel the API instead
     inv ngrok --url            # print the current public URL
+    inv cloudflare             # create Cloudflare tunnels (unlimited free)
+    inv tunnel --service api   # start API tunnel (run in Terminal A)
+    inv tunnel --service client # start client tunnel (run in Terminal B)
     inv test --unit            # unit tests only
     inv test --integration     # integration tests only
     inv test --coverage        # all tests + HTML coverage report
@@ -67,6 +70,52 @@ def ngrok(c, port=8501, url=False):
         return
 
     c.run(f"ngrok http http://127.0.0.1:{port}", pty=False)
+
+
+@task(
+    help={
+        "service": "Service to tunnel: 'api' (8000), 'client' (8501), or 'both' (default: both)",
+    }
+)
+def cloudflare(c, service="both"):
+    """Create/start Cloudflare Tunnel for API and/or client (unlimited free tunnels)."""
+
+    if service in ("api", "both"):
+        print("\n🔗 Setting up Cloudflare Tunnel for API (http://127.0.0.1:8000)...\n")
+        c.run(
+            "wrangler tunnel create name-that-face-api || echo 'Tunnel already exists'", pty=False
+        )
+        print("\n✅ API tunnel created. To start it, run in another terminal:")
+        print("   wrangler tunnel run --url http://localhost:8000 --name name-that-face-api\n")
+
+    if service in ("client", "both"):
+        print("\n🔗 Setting up Cloudflare Tunnel for Client (http://127.0.0.1:8501)...\n")
+        c.run(
+            "wrangler tunnel create name-that-face-client || echo 'Tunnel already exists'",
+            pty=False,
+        )
+        print("\n✅ Client tunnel created. To start it, run in another terminal:")
+        print("   wrangler tunnel run --url http://localhost:8501 --name name-that-face-client\n")
+
+    print("💡 Tip: Open https://one.dash.cloudflare.com/ to see your tunnels")
+
+
+@task(
+    help={
+        "service": "Service to run: 'api' (8000), 'client' (8501), or 'both'",
+    }
+)
+def tunnel(c, service="api"):
+    """Start a Cloudflare Tunnel (run in separate terminals for simultaneous tunnels)."""
+    if service == "api":
+        c.run("wrangler tunnel run name-that-face-api", pty=False)
+    elif service == "client":
+        c.run("wrangler tunnel run name-that-face-client", pty=False)
+    else:
+        print("❌ service must be 'api' or 'client'")
+        print("   Run these in TWO separate terminals:")
+        print("   - Terminal A: inv tunnel --service api")
+        print("   - Terminal B: inv tunnel --service client")
 
 
 @task(

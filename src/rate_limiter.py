@@ -261,6 +261,22 @@ def rate_limit(key, max_requests: Optional[int] = None):
             if request is None:
                 return JSONResponse(status_code=500, content={"detail": "No Request object found"})
 
+            # --- 1.5 log device info ---
+            x_original_ua = request.headers.get("x-original-user-agent")
+            default_ua = request.headers.get("user-agent", "unknown")
+            user_agent = x_original_ua or default_ua
+            is_mobile = any(
+                x in user_agent.lower() for x in ["mobile", "android", "iphone", "ipad"]
+            )
+            logger.info(
+                "request.device_detected",
+                is_mobile=is_mobile,
+                user_agent=user_agent[:80],
+                x_original_user_agent=x_original_ua,
+                default_user_agent=default_ua[:80],
+                endpoint=request.url.path,
+            )
+
             # --- 2. extract Bearer token and verify JWT ---
             try:
                 raw_token = token_service.get_token(request)
