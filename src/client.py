@@ -294,7 +294,9 @@ elif st.session_state.step == "capture_photo":
                             import cv2
 
                             frames_b64 = []
-                            for frame in frames[:50]:  # Limit to 50 frames
+                            # Sample every 2nd frame to reduce processing load while keeping coverage
+                            sampled_frames = frames[::2] if len(frames) > 100 else frames
+                            for frame in sampled_frames:
                                 _, buffer = cv2.imencode(".jpg", frame)
                                 frame_b64 = base64.b64encode(buffer).decode()
                                 frames_b64.append(frame_b64)
@@ -303,14 +305,14 @@ elif st.session_state.step == "capture_photo":
                             headers = build_headers(st.session_state.elevated_token)
 
                             logger.info(
-                                f"Sending {len(frames_b64)} frames to OpenCV analysis: {endpoint}"
+                                f"Sending {len(frames_b64)} frames to OpenCV analysis (sampled from {len(frames)}): {endpoint}"
                             )
 
                             resp = requests.post(
                                 endpoint,
                                 json={"frames_base64": frames_b64},
                                 headers=headers,
-                                timeout=30,
+                                timeout=60,
                             )
 
                             if resp.status_code == 200:

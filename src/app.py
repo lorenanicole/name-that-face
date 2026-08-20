@@ -332,6 +332,8 @@ async def analyze_video_liveness(request: Request, body: VideoLivenessRequest):
                 "confidence": 0.0,
                 "signals": ["Insufficient frames for server-side analysis"],
                 "frame_count": len(body.frames_base64) if body.frames_base64 else 0,
+                "avg_sharpness": 0.0,
+                "avg_motion": 0.0,
                 "analysis_type": "opencv_full",
             },
         )
@@ -339,7 +341,7 @@ async def analyze_video_liveness(request: Request, body: VideoLivenessRequest):
     try:
         # Decode base64 frames to OpenCV format
         frames = []
-        for frame_b64 in frames_to_analyze[:50]:  # Limit to 50 frames to avoid overload
+        for frame_b64 in frames_to_analyze:  # Process all frames for better analysis
             try:
                 frame_bytes = base64.b64decode(
                     frame_b64.split(",")[1] if "," in frame_b64 else frame_b64
@@ -360,6 +362,8 @@ async def analyze_video_liveness(request: Request, body: VideoLivenessRequest):
                     "confidence": 0.0,
                     "signals": ["Could not decode frames"],
                     "frame_count": 0,
+                    "avg_sharpness": 0.0,
+                    "avg_motion": 0.0,
                     "analysis_type": "opencv_full",
                 },
             )
@@ -382,11 +386,11 @@ async def analyze_video_liveness(request: Request, body: VideoLivenessRequest):
             status_code=200,
             content={
                 "is_live": result["is_live"],
-                "confidence": result["confidence"],
+                "confidence": float(result["confidence"]),
                 "signals": result["signals"],
                 "frame_count": result["frame_count"],
-                "avg_sharpness": result.get("avg_sharpness", 0),
-                "avg_motion": result.get("avg_motion", 0),
+                "avg_sharpness": float(result.get("avg_sharpness", 0)),
+                "avg_motion": float(result.get("avg_motion", 0)),
                 "analysis_type": "opencv_full",
             },
         )

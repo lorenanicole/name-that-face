@@ -11,7 +11,8 @@ def detect_faces_in_frame(frame, cascade_path=None):
 
     face_cascade = cv2.CascadeClassifier(cascade_path)
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-    faces = face_cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5, minSize=(30, 30))
+    # Use stricter params for mobile: lower minNeighbors for better detection on mobile cameras
+    faces = face_cascade.detectMultiScale(gray, scaleFactor=1.05, minNeighbors=3, minSize=(20, 20))
     return faces
 
 
@@ -101,7 +102,7 @@ def analyze_video_liveness(frames: list, confidence_threshold: float = 0.6) -> d
         if avg_sharpness > 100:
             signals.append(f"High image sharpness ({avg_sharpness:.0f})")
             confidence += 0.25
-        elif avg_sharpness > 50:
+        elif avg_sharpness > 30:
             signals.append(f"Moderate image sharpness ({avg_sharpness:.0f})")
             confidence += 0.15
 
@@ -119,11 +120,11 @@ def analyze_video_liveness(frames: list, confidence_threshold: float = 0.6) -> d
         motion_consistency = 1.0 - (np.std(optical_flows) / (avg_motion + 1e-6))
         motion_consistency = max(0, min(1, motion_consistency))
 
-        if avg_motion > 1.0:
+        if avg_motion > 0.3:
             signals.append(f"Natural motion detected (flow: {avg_motion:.2f})")
             confidence += 0.25
 
-            if motion_consistency > 0.5:
+            if motion_consistency > 0.4:
                 signals.append("Consistent motion pattern")
                 confidence += 0.1
 
